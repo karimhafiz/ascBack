@@ -14,6 +14,7 @@ const eventSchema = new mongoose.Schema({
   ticketPrice: { type: Number, required: true },
   images: { type: [String] }, // Array of image paths
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin" },
+  totalRevenue: { type: Number, default: 0 },
 });
 
 module.exports = mongoose.model("Event", eventSchema);

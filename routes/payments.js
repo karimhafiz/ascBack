@@ -2,6 +2,8 @@ const express = require("express");
 const router = express.Router();
 const paypal = require("paypal-rest-sdk");
 const nodemailer = require("nodemailer");
+const Ticket = require("../models/Ticket");
+const Event = require("../models/Event"); // Assuming you have an Event model
 require("dotenv").config();
 
 // Configure Nodemailer transporter
@@ -62,12 +64,11 @@ router.post("/pay", async (req, res) => {
 });
 
 // Execute Payment
-router.get("/success", (req, res) => {
+router.get("/success", async (req, res) => {
   const { paymentId, eventId, email } = req.query;
-  const decodedEmail = decodeURIComponent(email || ""); // Handle undefined email
-  console.log("Email received in /success route:", decodedEmail);
+  const decodedEmail = decodeURIComponent(email || "");
 
-  paypal.payment.get(paymentId, (error, payment) => {
+  paypal.payment.get(paymentId, async (error, payment) => {
     if (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -75,53 +76,108 @@ router.get("/success", (req, res) => {
     const receipt = {
       eventId,
       paymentId: payment.id,
-      payer: payment.payer.payer_info,
-      amount: payment.transactions[0].amount.total,
+      payerEmail: payment.payer.payer_info.email,
+      amount: parseFloat(payment.transactions[0].amount.total), // Ensure amount is a number
       currency: payment.transactions[0].amount.currency,
       description: payment.transactions[0].description,
       createdAt: payment.create_time,
     };
 
-    // Send email receipt
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: decodedEmail, // Use the decoded email
-      subject: `Your Ticket Receipt for Event ${eventId}`,
-      html: `
-        <h1>Thank You for Your Purchase!</h1>
-        <p>Dear ${receipt.payer.first_name} ${receipt.payer.last_name},</p>
-        <p>Thank you for purchasing tickets for the event. Here are your receipt details:</p>
-        <ul>
-          <li><strong>Event ID:</strong> ${receipt.eventId}</li>
-          <li><strong>Payment ID:</strong> ${receipt.paymentId}</li>
-          <li><strong>Amount:</strong> ${receipt.amount} ${
-        receipt.currency
-      }</li>
-          <li><strong>Description:</strong> ${receipt.description}</li>
-          <li><strong>Date:</strong> ${new Date(
-            receipt.createdAt
-          ).toLocaleString()}</li>
-        </ul>
-        <p>We look forward to seeing you at the event!</p>
-        <p>Best regards,</p>
-        <p>The Event Team</p>
-      `,
-    };
-
-    transporter.sendMail(mailOptions, (err, info) => {
-      if (err) {
-        console.error("Error sending email:", err);
-        return res.status(500).json({ error: "Failed to send email receipt" });
+    try {
+      // Check if the payment has already been processed
+      const existingTicket = await Ticket.findOne({
+        paymentId: receipt.paymentId,
+      });
+      if (existingTicket) {
+        return res
+          .status(200)
+          .json({ message: "Payment already processed", receipt });
       }
 
-      console.log("Email sent:", info.response);
-
-      res.json({
-        message: "Payment Successful",
-        receipt,
+      // Log the successful payment in the Ticket collection
+      const ticket = new Ticket({
+        eventId: receipt.eventId,
+        buyerEmail: receipt.payerEmail,
+        paymentId: receipt.paymentId, // Save paymentId to ensure idempotency
+        status: "paid",
       });
-    });
+      await ticket.save();
+
+      // Update total revenue (idempotent logic)
+      const event = await Event.findById(eventId); // Assuming you have an Event model
+      if (event) {
+        event.totalRevenue += receipt.amount; // Increment total revenue
+        await event.save();
+        console.log("Total revenue updated successfully:", event.totalRevenue);
+      }
+      if (!event) {
+        return res.status(404).json({ error: "Event not found" });
+      }
+
+      // Add the payment amount to the event's total revenue
+
+      // Send email receipt
+      const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: decodedEmail,
+        subject: `Your Ticket Receipt for Event ${eventId}`,
+        html: `
+          <h1>Thank You for Your Purchase!</h1>
+          <p>Dear ${payment.payer.payer_info.first_name} ${
+          payment.payer.payer_info.last_name
+        },</p>
+          <p>Thank you for purchasing tickets for the event. Here are your receipt details:</p>
+          <ul>
+            <li><strong>Event ID:</strong> ${receipt.eventId}</li>
+            <li><strong>Payment ID:</strong> ${receipt.paymentId}</li>
+            <li><strong>Amount:</strong> ${receipt.amount} ${
+          receipt.currency
+        }</li>
+            <li><strong>Description:</strong> ${receipt.description}</li>
+            <li><strong>Date:</strong> ${new Date(
+              receipt.createdAt
+            ).toLocaleString()}</li>
+          </ul>
+          <p>We look forward to seeing you at the event!</p>
+          <p>Best regards,</p>
+          <p>The Event Team</p>
+        `,
+      };
+
+      transporter.sendMail(mailOptions, (err, info) => {
+        if (err) {
+          console.error("Error sending email:", err);
+          return res
+            .status(500)
+            .json({ error: "Failed to send email receipt" });
+        }
+
+        res.json({ message: "Payment Successful", receipt });
+      });
+    } catch (dbError) {
+      console.error("Error saving ticket to database:", dbError);
+      res.status(500).json({ error: "Failed to save ticket details" });
+    }
   });
+});
+
+// Handle Payment Cancellation
+router.get("/cancel", async (req, res) => {
+  const { eventId, email } = req.query;
+  const decodedEmail = decodeURIComponent(email || "");
+
+  try {
+    const ticket = new Ticket({
+      eventId,
+      buyerEmail: decodedEmail,
+      status: "failed",
+    });
+    await ticket.save();
+    res.json({ message: "Payment was canceled" });
+  } catch (error) {
+    console.error("Error logging Failed payment: ", error);
+    res.status(500).json({ error: "Failed to log Failed payment" });
+  }
 });
 
 module.exports = router;
