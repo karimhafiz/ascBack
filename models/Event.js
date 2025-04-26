@@ -12,9 +12,28 @@ const eventSchema = new mongoose.Schema({
   ageRestriction: { type: String },
   accessibilityInfo: { type: String },
   ticketPrice: { type: Number, required: true },
-  images: { type: [String] }, // Array of image paths
+  images: { type: [String] },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin" },
   totalRevenue: { type: Number, default: 0 },
+  featured: { type: Boolean, default: false },
+  isReoccurring: { type: Boolean, default: false },
+  reoccurringFrequency: { type: String },
+  reoccurringEndDate: { type: Date },
+  reoccurringStartDate: { type: Date },
+  reoccurringFrequency: { type: String },
+  dayOfWeek: {
+    type: String,
+    enum: [
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday",
+      "sunday",
+    ],
+    default: null,
+  }, // Add dayOfWeek field
 });
 
 module.exports = mongoose.model("Event", eventSchema);

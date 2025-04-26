@@ -56,6 +56,12 @@ exports.createEvent = async (req, res) => {
       ageRestriction,
       accessibilityInfo,
       ticketPrice,
+      featured,
+      isReoccurring,
+      reoccurringStartDate,
+      reoccurringEndDate,
+      reoccurringFrequency,
+      dayOfWeek,
     } = JSON.parse(req.body.eventData);
 
     // Handle the uploaded image
@@ -75,8 +81,14 @@ exports.createEvent = async (req, res) => {
       city,
       ageRestriction,
       accessibilityInfo,
-      images: imagePath ? [imagePath] : [], // Save the image path in the database
       ticketPrice,
+      featured: featured === true || featured === "true",
+      isReoccurring: isReoccurring === true || isReoccurring === "true",
+      reoccurringStartDate,
+      reoccurringEndDate,
+      reoccurringFrequency,
+      dayOfWeek,
+      images: imagePath ? [imagePath] : [], // Save the image path in the database
       createdBy: req.admin.id, // Assuming `authMiddleware` adds `req.admin`
     });
 
@@ -104,6 +116,12 @@ exports.updateEvent = async (req, res) => {
       ageRestriction,
       accessibilityInfo,
       ticketPrice,
+      featured,
+      isReoccurring,
+      reoccurringStartDate,
+      reoccurringEndDate,
+      reoccurringFrequency,
+      dayOfWeek,
     } = JSON.parse(req.body.eventData); // Parse the event data from the request body
 
     const event = await Event.findById(req.params.id);
@@ -111,6 +129,11 @@ exports.updateEvent = async (req, res) => {
     if (!event) {
       return res.status(404).json({ message: "Event not found" });
     }
+
+    // Convert `featured` and `isReoccurring` to booleans
+    const updatedFeatured = featured === true || featured === "true";
+    const updatedIsReoccurring =
+      isReoccurring === true || isReoccurring === "true";
 
     // Handle the uploaded image
     let imagePath = null;
@@ -146,6 +169,12 @@ exports.updateEvent = async (req, res) => {
         ageRestriction,
         accessibilityInfo,
         ticketPrice,
+        featured: featured === true || featured === "true",
+        isReoccurring: isReoccurring === true || isReoccurring === "true",
+        reoccurringStartDate,
+        reoccurringEndDate,
+        reoccurringFrequency,
+        dayOfWeek,
         images: imagePath ? [imagePath] : event.images, // Replace images if a new one is provided
       },
       { new: true } // Return the updated document
