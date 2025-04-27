@@ -4,8 +4,6 @@ const jwt = require("jsonwebtoken");
 
 // Admin login
 exports.adminLogin = async (req, res) => {
-  console.log("Admin Routes Loaded");
-
   try {
     const { email, password } = req.body;
     const admin = await Admin.findOne({ email });

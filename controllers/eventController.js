@@ -44,6 +44,18 @@ exports.getEventById = async (req, res) => {
 // Create a new event
 exports.createEvent = async (req, res) => {
   try {
+    // Check if eventData exists before parsing
+    if (!req.body.eventData) {
+      return res.status(400).json({ error: "eventData is required" });
+    }
+
+    let eventData;
+    try {
+      eventData = JSON.parse(req.body.eventData);
+    } catch (e) {
+      return res.status(400).json({ error: "Invalid JSON in eventData" });
+    }
+
     const {
       title,
       shortDescription,
@@ -62,7 +74,7 @@ exports.createEvent = async (req, res) => {
       reoccurringEndDate,
       reoccurringFrequency,
       dayOfWeek,
-    } = JSON.parse(req.body.eventData);
+    } = eventData;
 
     // Handle the uploaded image
     let imagePath = null;
@@ -97,6 +109,7 @@ exports.createEvent = async (req, res) => {
       .status(201)
       .json({ message: "Event created successfully", event: newEvent });
   } catch (error) {
+    console.error("Create event error:", error);
     res.status(500).json({ error: error.message });
   }
 };

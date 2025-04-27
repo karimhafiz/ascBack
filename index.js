@@ -29,6 +29,6 @@ app.get("/", (req, res) => {
   res.send("Event Ticketing API is running...");
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, "192.168.1.116", () => {
   console.log(`Server running on port ${PORT}`);
 });

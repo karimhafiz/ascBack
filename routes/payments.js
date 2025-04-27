@@ -1,21 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const paypal = require("paypal-rest-sdk");
-const nodemailer = require("nodemailer");
+const { createTransporter } = require("../config/emailConfig");
 const Ticket = require("../models/Ticket");
-const Event = require("../models/Event"); // Assuming you have an Event model
+const Event = require("../models/Event");
 require("dotenv").config();
-
-// Configure Nodemailer transporter
-const transporter = nodemailer.createTransport({
-  service: "Gmail", // Use your email provider (e.g., Gmail, Outlook)
-  auth: {
-    user: process.env.EMAIL_USER, // Your email address
-    pass: process.env.EMAIL_PASS, // Your email password or app-specific password
-  },
-  debug: true, // Enable debug output
-  logger: true, // Log information to the console
-});
 
 paypal.configure({
   mode: "sandbox", // Change to 'live' for real transactions
@@ -26,7 +15,6 @@ paypal.configure({
 // Create PayPal Payment
 router.post("/pay", async (req, res) => {
   const { amount, eventId, email, quantity } = req.body;
-  console.log("Email received in /pay route:", email); // Log the email for debugging
 
   if (!amount || !eventId || !email || !quantity) {
     return res
@@ -38,10 +26,10 @@ router.post("/pay", async (req, res) => {
     intent: "sale",
     payer: { payment_method: "paypal" },
     redirect_urls: {
-      return_url: `http://localhost:5173/success?eventId=${eventId}&email=${encodeURIComponent(
-        email
-      )}`,
-      cancel_url: "http://localhost:5173/cancel",
+      return_url: `${
+        process.env.FRONT_END_URL
+      }success?eventId=${eventId}&email=${encodeURIComponent(email)}`,
+      cancel_url: `${process.env.FRONT_END_URL}cancel`,
     },
     transactions: [
       {
@@ -108,7 +96,6 @@ router.get("/success", async (req, res) => {
       if (event) {
         event.totalRevenue += receipt.amount; // Increment total revenue
         await event.save();
-        console.log("Total revenue updated successfully:", event.totalRevenue);
       }
       if (!event) {
         return res.status(404).json({ error: "Event not found" });
@@ -117,6 +104,7 @@ router.get("/success", async (req, res) => {
       // Add the payment amount to the event's total revenue
 
       // Send email receipt
+      const transporter = await createTransporter();
       const mailOptions = {
         from: process.env.EMAIL_USER,
         to: decodedEmail,
