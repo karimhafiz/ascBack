@@ -8,7 +8,17 @@ const cors = require("cors");
 
 const app = express();
 app.use(express.json());
-app.use(cors());
+
+// Update this:
+app.use(
+  cors({
+    origin: [
+      "https://asc-lac.vercel.app", // your frontend URL
+      "http://localhost:5173", // for local development (optional)
+    ],
+    credentials: true,
+  })
+);
 
 // Serve static files from the "uploads" directory
 // app.use("/uploads", express.static(path.join(__dirname, "uploads")));
