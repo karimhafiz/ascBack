@@ -1,6 +1,7 @@
 const Event = require("../models/Event");
 const path = require("path");
 const fs = require("fs");
+const cloudinary = require("../config/cloudinary"); // Add this at the top
 
 // Get all events
 exports.getAllEvents = async (req, res) => {
@@ -8,14 +9,14 @@ exports.getAllEvents = async (req, res) => {
     const events = await Event.find();
 
     // Map through events and prepend the base URL to the image paths
-    const updatedEvents = events.map((event) => {
-      const updatedImages = event.images.map(
-        (image) => `${req.protocol}://${req.get("host")}/${image}`
-      );
-      return { ...event.toObject(), images: updatedImages };
-    });
+    // const updatedEvents = events.map((event) => {
+    //   const updatedImages = event.images.map(
+    //     (image) => `${req.protocol}://${req.get("host")}/${image}`
+    //   );
+    //   return { ...event.toObject(), images: updatedImages };
+    // });
 
-    res.json(updatedEvents);
+    res.json(events);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -30,11 +31,12 @@ exports.getEventById = async (req, res) => {
     }
 
     // Prepend the base URL to the image paths
-    const updatedImages = event.images.map(
-      (image) => `${req.protocol}://${req.get("host")}/${image}`
-    );
+    // const updatedImages = event.images.map(
+    //   (image) => `${req.protocol}://${req.get("host")}/${image}`
+    // );
 
-    res.status(200).json({ ...event.toObject(), images: updatedImages });
+    // res.status(200).json({ ...event.toObject(), images: updatedImages });
+    res.status(200).json(event);
   } catch (error) {
     res
       .status(500)
@@ -77,9 +79,9 @@ exports.createEvent = async (req, res) => {
     } = eventData;
 
     // Handle the uploaded image
-    let imagePath = null;
+    let imageUrl = null;
     if (req.file) {
-      imagePath = path.join("uploads", req.file.filename);
+      imageUrl = req.file.path; // This is the Cloudinary URL
     }
 
     const newEvent = new Event({
@@ -100,8 +102,8 @@ exports.createEvent = async (req, res) => {
       reoccurringEndDate,
       reoccurringFrequency,
       dayOfWeek,
-      images: imagePath ? [imagePath] : [], // Save the image path in the database
-      createdBy: req.admin.id, // Assuming `authMiddleware` adds `req.admin`
+      images: imageUrl ? [imageUrl] : [],
+      createdBy: req.admin.id,
     });
 
     await newEvent.save();
@@ -109,7 +111,6 @@ exports.createEvent = async (req, res) => {
       .status(201)
       .json({ message: "Event created successfully", event: newEvent });
   } catch (error) {
-    console.error("Create event error:", error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -135,7 +136,7 @@ exports.updateEvent = async (req, res) => {
       reoccurringEndDate,
       reoccurringFrequency,
       dayOfWeek,
-    } = JSON.parse(req.body.eventData); // Parse the event data from the request body
+    } = JSON.parse(req.body.eventData);
 
     const event = await Event.findById(req.params.id);
 
@@ -143,28 +144,24 @@ exports.updateEvent = async (req, res) => {
       return res.status(404).json({ message: "Event not found" });
     }
 
-    // Convert `featured` and `isReoccurring` to booleans
-    const updatedFeatured = featured === true || featured === "true";
-    const updatedIsReoccurring =
-      isReoccurring === true || isReoccurring === "true";
-
     // Handle the uploaded image
     let imagePath = null;
     if (req.file) {
-      // Delete existing images
+      // Delete the old image from Cloudinary if it exists
       if (event.images && event.images.length > 0) {
-        event.images.forEach((existingImagePath) => {
-          const fullPath = path.join(__dirname, "..", existingImagePath);
-          fs.unlink(fullPath, (err) => {
-            if (err) {
-              console.error(`Failed to delete image: ${fullPath}`, err);
-            }
-          });
-        });
+        // Extract public_id from the Cloudinary URL
+        const urlParts = event.images[0].split("/");
+        const publicIdWithExtension = urlParts[urlParts.length - 1];
+        const publicId = publicIdWithExtension.split(".")[0];
+        const folder = "event-images"; // The folder you used in CloudinaryStorage
+        const fullPublicId = `${folder}/${publicId}`;
+        try {
+          await cloudinary.uploader.destroy(fullPublicId);
+        } catch (err) {
+          console.error("Failed to delete old image from Cloudinary:", err);
+        }
       }
-
-      // Save the new image path
-      imagePath = path.join("uploads", req.file.filename);
+      imagePath = req.file.path; // New Cloudinary URL
     }
 
     // Update the event in the database
@@ -190,7 +187,7 @@ exports.updateEvent = async (req, res) => {
         dayOfWeek,
         images: imagePath ? [imagePath] : event.images, // Replace images if a new one is provided
       },
-      { new: true } // Return the updated document
+      { new: true }
     );
 
     res.json({ message: "Event updated successfully", event: updatedEvent });
@@ -209,16 +206,21 @@ exports.deleteEvent = async (req, res) => {
       return res.status(404).json({ message: "Event not found" });
     }
 
-    // Delete associated images
+    // Delete associated images from Cloudinary
     if (event.images && event.images.length > 0) {
-      event.images.forEach((imagePath) => {
-        const fullPath = path.join(__dirname, "..", imagePath);
-        fs.unlink(fullPath, (err) => {
-          if (err) {
-            console.error(`Failed to delete image: ${fullPath}`, err);
-          }
-        });
-      });
+      for (const imageUrl of event.images) {
+        // Extract public_id from the Cloudinary URL
+        const urlParts = imageUrl.split("/");
+        const publicIdWithExtension = urlParts[urlParts.length - 1];
+        const publicId = publicIdWithExtension.split(".")[0];
+        const folder = "event-images";
+        const fullPublicId = `${folder}/${publicId}`;
+        try {
+          await cloudinary.uploader.destroy(fullPublicId);
+        } catch (err) {
+          console.error("Failed to delete image from Cloudinary:", err);
+        }
+      }
     }
 
     // Delete the event from the database

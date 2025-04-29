@@ -2,20 +2,8 @@ const express = require("express");
 const router = express.Router();
 const eventController = require("../controllers/eventController");
 const authMiddleware = require("../middleware/authMiddleware");
-const multer = require("multer");
-const path = require("path");
 
-// Configure multer for image uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/"); // Save images to the "uploads" folder
-  },
-  filename: (req, file, cb) => {
-    cb(null, `${Date.now()}-${file.originalname}`);
-  },
-});
-
-const upload = multer({ storage });
+const upload = require("../config/multer");
 
 // Event routes
 // Fetch all events

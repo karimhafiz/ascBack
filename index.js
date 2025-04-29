@@ -11,7 +11,7 @@ app.use(express.json());
 app.use(cors());
 
 // Serve static files from the "uploads" directory
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+// app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 const eventRoutes = require("./routes/events");
 const ticketRoutes = require("./routes/tickets");
@@ -25,6 +25,10 @@ app.use("/admins", adminRoutes);
 
 app.get("/", (req, res) => {
   res.send("Event Ticketing API is running...");
+});
+
+app.listen(process.env.PORT || 5000, () => {
+  console.log(`Server is running on port ${process.env.PORT || 5000}`);
 });
 
 // Export the app for Vercel serverless
