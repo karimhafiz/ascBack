@@ -13,8 +13,8 @@ router.get("/:id", eventController.getEventById);
 // create new event
 router.post(
   "/",
-  authMiddleware,
   upload.single("image"),
+  authMiddleware,
   eventController.createEvent
 );
 // update

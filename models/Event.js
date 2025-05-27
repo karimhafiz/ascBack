@@ -34,6 +34,12 @@ const eventSchema = new mongoose.Schema({
     ],
     default: null,
   }, // Add dayOfWeek field
+  typeOfEvent: {
+    type: String,
+    enum: ["Sports", "ASC"],
+    default: "ASC",
+  }, // Add typeOfEvent field
+  isTournament: { type: Boolean, default: false },
 });
 
 module.exports = mongoose.model("Event", eventSchema);

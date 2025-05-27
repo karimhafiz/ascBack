@@ -2,10 +2,12 @@ const express = require("express");
 const router = express.Router();
 const Ticket = require("../models/Ticket");
 const Event = require("../models/Event");
+const authenticateToken = require("../middleware/authMiddleware");
 
 // Buy a ticket
-router.post("/", async (req, res) => {
+router.post("/", authenticateToken, async (req, res) => {
   const { eventId, buyerEmail } = req.body;
+  const userId = req.user ? req.user.id : null;
 
   const event = await Event.findById(eventId);
   if (!event || event.ticketsAvailable <= 0) {
@@ -14,7 +16,7 @@ router.post("/", async (req, res) => {
       .json({ message: "Tickets sold out or event not found" });
   }
 
-  const ticket = new Ticket({ eventId, buyerEmail });
+  const ticket = new Ticket({ eventId, buyerEmail, user: userId });
   await ticket.save();
 
   event.ticketsAvailable -= 1;

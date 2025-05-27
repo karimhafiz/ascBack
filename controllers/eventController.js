@@ -45,6 +45,8 @@ exports.getEventById = async (req, res) => {
 };
 // Create a new event
 exports.createEvent = async (req, res) => {
+  console.log("Headers:", req.headers);
+  console.log("req.admin:", req.admin);
   try {
     // Check if eventData exists before parsing
     if (!req.body.eventData) {
@@ -76,6 +78,7 @@ exports.createEvent = async (req, res) => {
       reoccurringEndDate,
       reoccurringFrequency,
       dayOfWeek,
+      typeOfEvent,
     } = eventData;
 
     // Handle the uploaded image
@@ -104,6 +107,8 @@ exports.createEvent = async (req, res) => {
       dayOfWeek,
       images: imageUrl ? [imageUrl] : [],
       createdBy: req.admin.id,
+      typeOfEvent,
+      isTournament,
     });
 
     await newEvent.save();
@@ -136,6 +141,8 @@ exports.updateEvent = async (req, res) => {
       reoccurringEndDate,
       reoccurringFrequency,
       dayOfWeek,
+      typeOfEvent, // <-- add this
+      isTournament,
     } = JSON.parse(req.body.eventData);
 
     const event = await Event.findById(req.params.id);
@@ -185,7 +192,9 @@ exports.updateEvent = async (req, res) => {
         reoccurringEndDate,
         reoccurringFrequency,
         dayOfWeek,
+        typeOfEvent, // <-- add this
         images: imagePath ? [imagePath] : event.images, // Replace images if a new one is provided
+        isTournament,
       },
       { new: true }
     );
