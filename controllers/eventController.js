@@ -45,8 +45,8 @@ exports.getEventById = async (req, res) => {
 };
 // Create a new event
 exports.createEvent = async (req, res) => {
-  // console.log("Headers:", req.headers);
-  // console.log("req.user:", req.user);
+  console.log("Headers:", req.headers);
+  console.log("req.admin:", req.admin);
   try {
     // Check if eventData exists before parsing
     if (!req.body.eventData) {
@@ -106,7 +106,7 @@ exports.createEvent = async (req, res) => {
       reoccurringFrequency,
       dayOfWeek,
       images: imageUrl ? [imageUrl] : [],
-      createdBy: req.user && req.user.id,
+      createdBy: req.admin.id,
       typeOfEvent,
       isTournament,
     });
