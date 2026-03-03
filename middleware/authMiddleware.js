@@ -2,7 +2,7 @@ const jwt = require("jsonwebtoken");
 
 function generateToken(user) {
   return jwt.sign(
-    { id: user._id, role: user.role || "admin" },
+    { id: user._id, role: user.role },
     process.env.JWT_SECRET,
     {
       expiresIn: "1h",
@@ -23,11 +23,8 @@ function authenticateToken(req, res, next) {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     console.log("AUTH MIDDLEWARE: decoded:", decoded);
-    if (decoded.role === "admin") {
-      req.admin = decoded;
-    } else {
-      req.user = decoded;
-    }
+    // always attach user payload to req.user
+    req.user = decoded;
     next();
   } catch (err) {
     console.error("JWT Verification Error:", err);
@@ -35,4 +32,6 @@ function authenticateToken(req, res, next) {
   }
 }
 
-module.exports = authenticateToken;
+
+
+module.exports =  authenticateToken;
