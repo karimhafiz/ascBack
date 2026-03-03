@@ -13,7 +13,7 @@ const eventSchema = new mongoose.Schema({
   accessibilityInfo: { type: String },
   ticketPrice: { type: Number, required: true },
   images: { type: [String] },
-  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin" },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   totalRevenue: { type: Number, default: 0 },
   featured: { type: Boolean, default: false },
   isReoccurring: { type: Boolean, default: false },

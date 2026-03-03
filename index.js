@@ -26,13 +26,13 @@ app.use(
 const eventRoutes = require("./routes/events");
 const ticketRoutes = require("./routes/tickets");
 const paymentRoutes = require("./routes/payments");
-const adminRoutes = require("./routes/admin");
+const usersRoutes = require("./routes/users");
 const teamsRoutes = require("./routes/teams");
 
 app.use("/payments", paymentRoutes);
 app.use("/events", eventRoutes);
 app.use("/tickets", ticketRoutes);
-app.use("/admins", adminRoutes);
+app.use("/users", usersRoutes);
 app.use("/teams", teamsRoutes);
 
 app.get("/", (req, res) => {
