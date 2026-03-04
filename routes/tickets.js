@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const Ticket = require("../models/Ticket");
 const Event = require("../models/Event");
-const authenticateToken = require("../middleware/authorize");
+const authenticateToken = require("../middleware/authMiddleware");
 
 // Buy a ticket
 router.post("/", authenticateToken, async (req, res) => {

@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const eventController = require("../controllers/eventController");
-const authMiddleware = require("../middleware/authorize");
-const authorize = require("../middleware/authorize");
+const authMiddleware = require("../middleware/authMiddleware");
+const authorize = require("../middleware/authMiddleware");
 const upload = require("../config/multer");
 
 // Event routes
@@ -22,10 +22,11 @@ router.post(
 router.put(
   "/:id",
   authMiddleware,
+  authorize("admin", "moderator"),
   upload.single("image"),
   authorize("admin", "moderator"),
   eventController.updateEvent
 );
-router.delete("/:id", authMiddleware, eventController.deleteEvent);
+router.delete("/:id", authMiddleware, authorize("admin", "moderator"), eventController.deleteEvent);
 
 module.exports = router;

@@ -1,11 +1,10 @@
 const express = require("express");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const User = require("../models/User");
 const router = express.Router();
 const userController = require("../controllers/userController");
-const authMiddleware = require("../middleware/authorize");
+const authController = require("../controllers/oauthController");
+const authMiddleware = require("../middleware/authMiddleware");
 
+router.post("/google", authController.googleLogin);
 router.post("/login", userController.login);
 router.post("/register", userController.register);
 router.get("/", authMiddleware, userController.getAllUsers);
