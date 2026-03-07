@@ -17,6 +17,7 @@ const eventSchema = new mongoose.Schema({
   totalRevenue: { type: Number, default: 0 },
   featured: { type: Boolean, default: false },
   isReoccurring: { type: Boolean, default: false },
+  ticketsAvailable: { type: Number, default: 100 },
   reoccurringFrequency: { type: String },
   reoccurringEndDate: { type: Date },
   reoccurringStartDate: { type: Date },
@@ -40,6 +41,7 @@ const eventSchema = new mongoose.Schema({
     default: "ASC",
   }, // Add typeOfEvent field
   isTournament: { type: Boolean, default: false },
+  tournamentFee: { type: Number, default: 50 },
 });
 
 module.exports = mongoose.model("Event", eventSchema);

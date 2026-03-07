@@ -1,25 +1,16 @@
 const Team = require("../models/Team");
 const Event = require("../models/Event");
-const paypal = require("paypal-rest-sdk");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 require("dotenv").config();
-
-// Configure PayPal
-paypal.configure({
-  mode: "sandbox", // Change to 'live' for real transactions
-  client_id: process.env.PAYPAL_CLIENT_ID,
-  client_secret: process.env.PAYPAL_SECRET,
-});
 
 // Get a single team by ID
 exports.getTeam = async (req, res) => {
   try {
     const { teamId } = req.params;
     const team = await Team.findById(teamId);
-
     if (!team) {
       return res.status(404).json({ error: "Team not found" });
     }
-
     res.json({ team });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -33,9 +24,7 @@ exports.signupTeam = async (req, res) => {
     const { eventId } = req.params;
 
     if (!name || !members || !Array.isArray(members) || members.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "Team name and members are required" });
+      return res.status(400).json({ error: "Team name and members are required" });
     }
 
     const team = new Team({
@@ -54,60 +43,53 @@ exports.signupTeam = async (req, res) => {
   }
 };
 
-// Process payment for a team
+// ─── POST /teams/:teamId/pay ──────────────────────────────────────────────────
+// Creates a Stripe Checkout session for a team registration fee.
+// Same flow as ticket payments — redirects to Stripe's hosted page.
+// On success, Stripe redirects to team-confirmation with the session ID.
+// ─────────────────────────────────────────────────────────────────────────────
 exports.processTeamPayment = async (req, res) => {
   try {
     const { teamId } = req.params;
 
-    // Find the team
     const team = await Team.findById(teamId);
     if (!team) {
       return res.status(404).json({ error: "Team not found" });
     }
 
-    // Find the associated event to get the price
     const event = await Event.findById(team.event);
     if (!event) {
       return res.status(404).json({ error: "Event not found" });
     }
 
-    // Ensure the event has a tournament fee defined
-    const amount = event.tournamentFee || 50; // Default to 50 if not set
+    const amount = event.tournamentFee || 50; // default £50 if not set
 
-    // Set up PayPal payment
-    const paymentData = {
-      intent: "sale",
-      payer: { payment_method: "paypal" },
-      redirect_urls: {
-        return_url: `${
-          process.env.FRONT_END_URL
-        }success?teamId=${teamId}&email=${encodeURIComponent(
-          team.manager.email
-        )}`,
-        cancel_url: `${process.env.FRONT_END_URL}cancel`,
-      },
-      transactions: [
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      customer_email: team.manager.email,
+      line_items: [
         {
-          amount: { total: amount.toFixed(2), currency: "GBP" },
-          description: `Team registration fee for ${team.name} at ${event.title}`,
+          price_data: {
+            currency: "gbp",
+            product_data: {
+              name: `Team Registration — ${event.title}`,
+              description: `Team: ${team.name}`,
+            },
+            unit_amount: Math.round(amount * 100), // pence
+          },
+          quantity: 1,
         },
       ],
-    };
-
-    paypal.payment.create(paymentData, (error, payment) => {
-      if (error) {
-        console.error("PayPal Payment Creation Error:", error);
-        return res.status(500).json({ error: error.message });
-      } else {
-        // Find the approval URL and send it back
-        const approvalLink = payment.links.find(
-          (l) => l.rel === "approval_url"
-        );
-        res.json({
-          link: approvalLink.href,
-        });
-      }
+      mode: "payment",
+      success_url: `${process.env.FRONT_END_URL}team-confirmation?session_id={CHECKOUT_SESSION_ID}&teamId=${teamId}`,
+      cancel_url: `${process.env.FRONT_END_URL}events/${team.event}`,
+      metadata: {
+        teamId: teamId.toString(),
+        eventId: team.event.toString(),
+      },
     });
+
+    res.json({ url: session.url });
   } catch (error) {
     console.error("Team payment error:", error);
     res.status(500).json({ error: error.message });

@@ -24,19 +24,28 @@ exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
-    console.log('User found:', user);  // is it null?
     if (!user) {
       return res.status(400).json({ message: "Invalid credentials" });
     }
+
+    // if account was created via Google, no password exists
+    if (!user.password) {
+      return res.status(400).json({
+        message: "This account uses Google Sign-In. Please log in with Google.",
+      });
+    }
+
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ message: "Invalid credentials" });
     }
+
     const token = jwt.sign(
-      { id: user._id, role: user.role, name: user.name },
+      { id: user._id, role: user.role, name: user.name, email: user.email }, // ← add email
       process.env.JWT_SECRET || "secret",
       { expiresIn: "7d" }
     );
+
     res.json({
       token,
       user: {
