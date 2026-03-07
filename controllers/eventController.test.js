@@ -14,7 +14,8 @@ app.use("/api/events", eventRoutes); // Fixed the route
 jest.mock("../middleware/authMiddleware", () => (req, res, next) => next());
 describe("Event Controller", () => {
   beforeEach(async () => {
-    await Event.deleteMany({});
+    // use test database or mock the database connection
+    // await Event.deleteMany({});
   });
   beforeAll(async () => {
     await mongoose.connect(`${process.env.MONGO_URI}`);
