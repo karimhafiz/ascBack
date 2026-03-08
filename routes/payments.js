@@ -1,233 +1,177 @@
 const express = require("express");
 const router = express.Router();
-const paypal = require("paypal-rest-sdk");
-const { createTransporter } = require("../config/emailConfig");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const Ticket = require("../models/Ticket");
 const Event = require("../models/Event");
-require("dotenv").config();
 
-paypal.configure({
-  mode: "sandbox", // Change to 'live' for real transactions
-  client_id: process.env.PAYPAL_CLIENT_ID,
-  client_secret: process.env.PAYPAL_SECRET,
-});
+// ─── POST /payments/create-checkout-session ───────────────────────────────────
+// Called by the frontend when the user clicks "Buy Ticket"
+// Body: { eventId, email, quantity }
+//
+// What happens here:
+//   1. We look up the event to get the title and price
+//   2. We create a Stripe Checkout Session — this is a temporary Stripe-hosted
+//      payment page. Stripe gives us back a URL to redirect the user to.
+//   3. We send that URL back to the frontend, which redirects the user.
+//   4. Stripe handles card entry, 3D Secure, Apple Pay etc. on their page.
+//   5. On success, Stripe redirects to our success_url with the session ID.
+//   6. On cancel, Stripe redirects to our cancel_url.
+//
+// Stripe automatically sends an email receipt to the customer if you have
+// "Successful payments" enabled in Stripe Dashboard → Settings → Emails.
+// ─────────────────────────────────────────────────────────────────────────────
+router.post("/create-checkout-session", async (req, res) => {
+  const { eventId, email, quantity } = req.body;
 
-// Create PayPal Payment
-router.post("/pay", async (req, res) => {
-  const { amount, eventId, email, quantity } = req.body;
-
-  if (!amount || !eventId || !email || !quantity) {
-    return res
-      .status(400)
-      .json({ error: "Amount, Event ID, Email, and Quantity are required" });
+  if (!eventId || !email || !quantity) {
+    return res.status(400).json({ error: "eventId, email, and quantity are required" });
   }
 
-  const paymentData = {
-    intent: "sale",
-    payer: { payment_method: "paypal" },
-    redirect_urls: {
-      return_url: `${
-        process.env.FRONT_END_URL
-      }success?eventId=${eventId}&email=${encodeURIComponent(email)}`,
-      cancel_url: `${process.env.FRONT_END_URL}cancel`,
-    },
-    transactions: [
-      {
-        amount: { total: amount.toFixed(2), currency: "GBP" },
-        description: `Purchase of ${quantity} ticket(s) for event ${eventId}`,
+  try {
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    if (event.ticketsAvailable < quantity) {
+      return res.status(400).json({ error: "Not enough tickets available" });
+    }
+
+    // Create a Stripe Checkout Session.
+    // `line_items` describes what the user is buying — Stripe uses this to
+    // display the product name, price, and quantity on the checkout page.
+    // `price_data` is used instead of a pre-created Stripe Price object,
+    // so we can pass the event price dynamically from our database.
+    // `unit_amount` is in pence (GBP smallest unit), so we multiply by 100.
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      customer_email: email, // pre-fills email on Stripe's page
+      line_items: [
+        {
+          price_data: {
+            currency: "gbp",
+            product_data: {
+              name: event.title,
+              description: event.shortDescription,
+            },
+            unit_amount: Math.round(event.ticketPrice * 100), // pence
+          },
+          quantity,
+        },
+      ],
+      mode: "payment",
+
+      // After payment succeeds, Stripe redirects here.
+      // {CHECKOUT_SESSION_ID} is a Stripe placeholder — it fills it in automatically.
+      // We use it in /success to retrieve the session and confirm payment details.
+      success_url: `${process.env.BACK_END_URL}payments/success?session_id={CHECKOUT_SESSION_ID}&eventId=${eventId}`,
+      cancel_url: `${process.env.FRONT_END_URL}events/${eventId}`,
+
+      // Store eventId, email, quantity in metadata so we can access them
+      // in the success route without relying on URL params alone.
+      metadata: {
+        eventId: eventId.toString(),
+        email,
+        quantity: quantity.toString(),
       },
-    ],
-  };
+    });
 
-  paypal.payment.create(paymentData, (error, payment) => {
-    if (error) {
-      console.error("PayPal Payment Creation Error:", error);
-      res.status(500).json({ error: error.message });
-    } else {
-      res.json({
-        link: payment.links.find((l) => l.rel === "approval_url").href,
-      });
-    }
-  });
+    // Return the Stripe Checkout URL to the frontend
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("Stripe session creation error:", err);
+    res.status(500).json({ error: "Failed to create checkout session" });
+  }
 });
 
-// Execute Payment
+// ─── GET /payments/success ────────────────────────────────────────────────────
+// Stripe redirects the user here after a successful payment.
+// Query params: session_id (from Stripe), eventId (from our success_url)
+//
+// What happens here:
+//   1. We retrieve the Stripe session using the session_id to verify payment
+//      status. This is important — never trust the redirect alone, always
+//      verify with Stripe's API.
+//   2. If payment_status is "paid", we create a Ticket in our DB and update
+//      the event's revenue and available tickets.
+//   3. We check for an existing ticket with this session ID first (idempotency)
+//      — in case the user refreshes the success page.
+//   4. Stripe sends the receipt email automatically — no nodemailer needed.
+//   5. We redirect the user to the frontend confirmation page.
+// ─────────────────────────────────────────────────────────────────────────────
 router.get("/success", async (req, res) => {
-  const { paymentId, eventId, teamId, email } = req.query;
-  const decodedEmail = decodeURIComponent(email || "");
+  const { session_id, eventId } = req.query;
 
-  paypal.payment.get(paymentId, async (error, payment) => {
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
-
-    const receipt = {
-      eventId,
-      paymentId: payment.id,
-      payerEmail: payment.payer.payer_info.email,
-      amount: parseFloat(payment.transactions[0].amount.total), // Ensure amount is a number
-      currency: payment.transactions[0].amount.currency,
-      description: payment.transactions[0].description,
-      createdAt: payment.create_time,
-    };
-    try {
-      // Check if the payment has already been processed
-      const existingTicket = await Ticket.findOne({
-        paymentId: receipt.paymentId,
-      });
-      if (existingTicket) {
-        return res
-          .status(200)
-          .json({ message: "Payment already processed", receipt });
-      }
-
-      // If this is a team payment
-      if (teamId) {
-        // Update the team record to mark as paid
-        const Team = require("../models/Team");
-        const team = await Team.findById(teamId);
-
-        if (team) {
-          team.paid = true;
-          team.paymentId = receipt.paymentId;
-          await team.save();
-        } else {
-          return res.status(404).json({ error: "Team not found" });
-        }
-
-        // Update event revenue
-        const event = await Event.findById(team.event);
-        if (event) {
-          event.totalRevenue += receipt.amount;
-          await event.save();
-        }
-
-        // Send email confirmation for team registration
-        const transporter = await createTransporter();
-        const mailOptions = {
-          from: process.env.EMAIL_USER,
-          to: decodedEmail,
-          subject: `Team Registration Confirmation for ${
-            event ? event.title : "Tournament"
-          }`,
-          html: `
-            <h1>Team Registration Confirmed!</h1>
-            <p>Dear ${payment.payer.payer_info.first_name} ${
-            payment.payer.payer_info.last_name
-          },</p>
-            <p>Thank you for registering your team. Your payment has been processed successfully.</p>
-            <ul>
-              <li><strong>Team:</strong> ${team.name}</li>
-              <li><strong>Event:</strong> ${event ? event.title : teamId}</li>
-              <li><strong>Payment ID:</strong> ${receipt.paymentId}</li>
-              <li><strong>Amount:</strong> ${receipt.amount} ${
-            receipt.currency
-          }</li>
-              <li><strong>Date:</strong> ${new Date(
-                receipt.createdAt
-              ).toLocaleString()}</li>
-            </ul>
-            <p>We look forward to seeing your team at the tournament!</p>
-            <p>Best regards,</p>
-            <p>The Tournament Team</p>
-          `,
-        };
-
-        transporter.sendMail(mailOptions, (err, info) => {
-          if (err) {
-            console.error("Error sending email:", err);
-          }
-        });
-
-        return res.redirect(
-          `${process.env.FRONT_END_URL}team-confirmation?teamId=${teamId}`
-        );
-      }
-
-      // For regular ticket purchases
-      // Log the successful payment in the Ticket collection
-      const ticket = new Ticket({
-        eventId: receipt.eventId,
-        buyerEmail: receipt.payerEmail,
-        paymentId: receipt.paymentId, // Save paymentId to ensure idempotency
-        status: "paid",
-      });
-      await ticket.save();
-
-      // Update total revenue (idempotent logic)
-      const event = await Event.findById(eventId); // Assuming you have an Event model
-      if (event) {
-        event.totalRevenue += receipt.amount; // Increment total revenue
-        await event.save();
-      }
-      if (!event) {
-        return res.status(404).json({ error: "Event not found" });
-      }
-
-      // Add the payment amount to the event's total revenue
-
-      // Send email receipt
-      const transporter = await createTransporter();
-      const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to: decodedEmail,
-        subject: `Your Ticket Receipt for Event ${eventId}`,
-        html: `
-          <h1>Thank You for Your Purchase!</h1>
-          <p>Dear ${payment.payer.payer_info.first_name} ${
-          payment.payer.payer_info.last_name
-        },</p>
-          <p>Thank you for purchasing tickets for the event. Here are your receipt details:</p>
-          <ul>
-            <li><strong>Event ID:</strong> ${receipt.eventId}</li>
-            <li><strong>Payment ID:</strong> ${receipt.paymentId}</li>
-            <li><strong>Amount:</strong> ${receipt.amount} ${
-          receipt.currency
-        }</li>
-            <li><strong>Description:</strong> ${receipt.description}</li>
-            <li><strong>Date:</strong> ${new Date(
-              receipt.createdAt
-            ).toLocaleString()}</li>
-          </ul>
-          <p>We look forward to seeing you at the event!</p>
-          <p>Best regards,</p>
-          <p>The Event Team</p>
-        `,
-      };
-
-      transporter.sendMail(mailOptions, (err, info) => {
-        if (err) {
-          console.error("Error sending email:", err);
-          return res
-            .status(500)
-            .json({ error: "Failed to send email receipt" });
-        }
-
-        res.json({ message: "Payment Successful", receipt });
-      });
-    } catch (dbError) {
-      console.error("Error saving ticket to database:", dbError);
-      res.status(500).json({ error: "Failed to save ticket details" });
-    }
-  });
-});
-
-// Handle Payment Cancellation
-router.get("/cancel", async (req, res) => {
-  const { eventId, email } = req.query;
-  const decodedEmail = decodeURIComponent(email || "");
+  if (!session_id) {
+    return res.status(400).json({ error: "Missing session_id" });
+  }
 
   try {
+    // Retrieve the session from Stripe to verify it's genuinely paid.
+    // This is a server-side call — the user cannot fake this.
+    const session = await stripe.checkout.sessions.retrieve(session_id);
+
+    if (session.payment_status !== "paid") {
+      return res.status(400).json({ error: "Payment not completed" });
+    }
+
+    // Idempotency check — if this session was already processed, don't
+    // create duplicate tickets. This handles page refreshes gracefully.
+    const existingTicket = await Ticket.findOne({ paymentId: session.id });
+    if (existingTicket) {
+      return res.redirect(`${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}`);
+    }
+
+    const { email, quantity } = session.metadata;
+    const qty = parseInt(quantity, 10);
+    const amountPaid = session.amount_total / 100; // convert pence back to pounds
+
+    // Save the ticket to our database
     const ticket = new Ticket({
       eventId,
-      buyerEmail: decodedEmail,
-      status: "failed",
+      buyerEmail: email,
+      paymentId: session.id, // Stripe session ID used as payment reference
+      status: "paid",
+      quantity: qty,
     });
     await ticket.save();
-    res.json({ message: "Payment was canceled" });
-  } catch (error) {
-    console.error("Error logging Failed payment: ", error);
-    res.status(500).json({ error: "Failed to log Failed payment" });
+
+    // Update the event — decrement available tickets and add to revenue
+    const event = await Event.findById(eventId);
+    if (event) {
+      event.ticketsAvailable = Math.max(0, event.ticketsAvailable - qty);
+      event.totalRevenue += amountPaid;
+      await event.save();
+    }
+
+    // Redirect to frontend confirmation page.
+    // Stripe has already emailed the receipt to the customer automatically.
+    res.redirect(`${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}`);
+  } catch (err) {
+    console.error("Stripe success handler error:", err);
+    res.status(500).json({ error: "Failed to process payment confirmation" });
+  }
+});
+
+// ─── GET /payments/session/:sessionId ────────────────────────────────────────
+// Called by the frontend confirmation page to display order details.
+// The frontend can't read Stripe session data directly, so it asks our
+// backend to fetch it and return the relevant fields.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get("/session/:sessionId", async (req, res) => {
+  try {
+    const session = await stripe.checkout.sessions.retrieve(req.params.sessionId);
+    res.json({
+      customerEmail: session.customer_email,
+      amountTotal: session.amount_total / 100,
+      currency: session.currency,
+      paymentStatus: session.payment_status,
+      eventId: session.metadata.eventId,
+      quantity: session.metadata.quantity,
+    });
+  } catch (err) {
+    console.error("Error retrieving session:", err);
+    res.status(500).json({ error: "Failed to retrieve session" });
   }
 });
 

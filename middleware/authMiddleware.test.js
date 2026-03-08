@@ -1,5 +1,5 @@
 const jwt = require("jsonwebtoken");
-const authenticateToken = require("./authMiddleware");
+const authenticateToken = require("./authorize");
 
 describe("authenticateToken middleware", () => {
   let req, res, next;
@@ -37,7 +37,7 @@ describe("authenticateToken middleware", () => {
     const decoded = { id: "123" };
     jest.spyOn(jwt, "verify").mockReturnValue(decoded);
     authenticateToken(req, res, next);
-    expect(req.admin).toEqual(decoded);
+    expect(req.user).toEqual(decoded);
     expect(next).toHaveBeenCalled();
     jwt.verify.mockRestore();
   });
