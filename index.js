@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const path = require("path");
 const connectDB = require("./config/db"); // Import the database connection function
+
 connectDB();
 
 const cors = require("cors");
@@ -28,11 +29,14 @@ const ticketRoutes = require("./routes/tickets");
 const paymentRoutes = require("./routes/payments");
 const usersRoutes = require("./routes/users");
 const teamsRoutes = require("./routes/teams");
+const adminRoutes = require("./routes/admin");
+
 
 app.use("/payments", paymentRoutes);
 app.use("/events", eventRoutes);
 app.use("/tickets", ticketRoutes);
 app.use("/users", usersRoutes);
+app.use("/admin", adminRoutes);
 app.use("/teams", teamsRoutes);
 
 app.get("/", (req, res) => {

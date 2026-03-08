@@ -99,37 +99,3 @@ exports.getProfile = async (req, res) => {
   }
 };
 
-// administrative helpers
-exports.getAllUsers = async (req, res) => {
-  try {
-    const users = await User.find().select("-password");
-    res.json(users);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-exports.createUser = async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const newUser = new User({ username, password: hashedPassword });
-    await newUser.save();
-
-    res
-      .status(201)
-      .json({ message: "User created successfully", user: newUser });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-exports.deleteUser = async (req, res) => {
-  try {
-    await User.findByIdAndDelete(req.params.id);
-    res.json({ message: "User deleted successfully" });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
