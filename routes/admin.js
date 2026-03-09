@@ -8,7 +8,7 @@ const authorize = require("../middleware/authorize");
 router.get(
     "/dashboard",
     authMiddleware,
-    authorize("admin", "moderator"),
+    authorize("admin"),
     adminController.getDashboard
 );
 
