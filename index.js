@@ -30,6 +30,7 @@ const paymentRoutes = require("./routes/payments");
 const usersRoutes = require("./routes/users");
 const teamsRoutes = require("./routes/teams");
 const adminRoutes = require("./routes/admin");
+const pageContentRoutes = require("./routes/pageContent");
 
 
 app.use("/payments", paymentRoutes);
@@ -38,6 +39,7 @@ app.use("/tickets", ticketRoutes);
 app.use("/users", usersRoutes);
 app.use("/admin", adminRoutes);
 app.use("/teams", teamsRoutes);
+app.use("/pageContent", pageContentRoutes);
 
 app.get("/", (req, res) => {
   res.send("Event Ticketing API is running...");

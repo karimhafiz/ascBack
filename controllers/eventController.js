@@ -79,6 +79,8 @@ exports.createEvent = async (req, res) => {
       reoccurringFrequency,
       dayOfWeek,
       typeOfEvent,
+      isTournament,
+      tournamentFee,
     } = eventData;
 
     // Handle the uploaded image
@@ -106,9 +108,10 @@ exports.createEvent = async (req, res) => {
       reoccurringFrequency,
       dayOfWeek,
       images: imageUrl ? [imageUrl] : [],
-      createdBy: req.admin.id,
+      createdBy: req.user.id,
       typeOfEvent,
-      isTournament,
+      isTournament: isTournament === true || isTournament === "true",
+      tournamentFee: tournamentFee || 50,
     });
 
     await newEvent.save();

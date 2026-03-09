@@ -11,6 +11,7 @@ const eventSchema = new mongoose.Schema({
   city: { type: String, required: true },
   ageRestriction: { type: String },
   accessibilityInfo: { type: String },
+  // interchangable for tournament fee (only players will pay)
   ticketPrice: { type: Number, required: true },
   images: { type: [String] },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -41,7 +42,6 @@ const eventSchema = new mongoose.Schema({
     default: "ASC",
   }, // Add typeOfEvent field
   isTournament: { type: Boolean, default: false },
-  tournamentFee: { type: Number, default: 50 },
 });
 
 module.exports = mongoose.model("Event", eventSchema);
