@@ -11,9 +11,7 @@ router.post("/", authenticateToken, async (req, res) => {
 
   const event = await Event.findById(eventId);
   if (!event || event.ticketsAvailable <= 0) {
-    return res
-      .status(400)
-      .json({ message: "Tickets sold out or event not found" });
+    return res.status(400).json({ message: "Tickets sold out or event not found" });
   }
 
   const ticket = new Ticket({ eventId, buyerEmail, user: userId });
@@ -25,29 +23,27 @@ router.post("/", authenticateToken, async (req, res) => {
   res.status(201).json(ticket);
 });
 
-// Fetch all tickets with event details
+// Fetch all tickets (aggregated)
 router.get("/", async (req, res) => {
   try {
-    // Fetch tickets and populate the eventId field with event details
     const tickets = await Ticket.find().populate("eventId");
 
-    // Aggregate ticket data by event
     const aggregatedData = tickets.reduce((acc, ticket) => {
-      const event = ticket.eventId; // Populated event details
-      if (!event) return acc; // Skip if event is not found
+      const event = ticket.eventId;
+      if (!event) return acc;
 
       if (!acc[event._id]) {
         acc[event._id] = {
           title: event.title,
           ticketsSold: 0,
           ticketsCanceled: 0,
-          totalRevenue: 0, // Initialize total revenue
+          totalRevenue: 0,
         };
       }
 
       if (ticket.status === "paid") {
         acc[event._id].ticketsSold += 1;
-        acc[event._id].totalRevenue += event.ticketPrice; // Calculate revenue dynamically
+        acc[event._id].totalRevenue += event.ticketPrice;
       } else if (ticket.status === "failed" || ticket.status === "canceled") {
         acc[event._id].ticketsCanceled += 1;
       }
@@ -55,16 +51,41 @@ router.get("/", async (req, res) => {
       return acc;
     }, {});
 
-    // Convert aggregated data to an array and round totalRevenue
     const aggregatedArray = Object.values(aggregatedData).map((event) => ({
       ...event,
-      totalRevenue: parseFloat(event.totalRevenue.toFixed(2)), // Round to 2 decimal places
+      totalRevenue: parseFloat(event.totalRevenue.toFixed(2)),
     }));
 
     res.json(aggregatedArray);
   } catch (error) {
     console.error("Error fetching tickets:", error);
     res.status(500).json({ error: "Failed to fetch tickets" });
+  }
+});
+
+// GET /tickets/:id — fetch a single ticket by _id, auth required (owner only)
+router.get("/:id", authenticateToken, async (req, res) => {
+  try {
+    const ticket = await Ticket.findById(req.params.id)
+      .populate("eventId", "title date street city postCode images ticketPrice typeOfEvent")
+      .populate("user", "name email");
+
+    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+
+    // Only the buyer or an admin can view the ticket
+    const requestingUser = req.user;
+    const isOwner = ticket.buyerEmail === requestingUser.email ||
+                    ticket.user?._id?.toString() === requestingUser.id;
+    const isAdmin = requestingUser.role === "admin" || requestingUser.role === "moderator";
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    res.json(ticket);
+  } catch (err) {
+    console.error("Error fetching ticket:", err);
+    res.status(500).json({ message: err.message });
   }
 });
 

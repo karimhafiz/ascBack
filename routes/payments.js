@@ -64,7 +64,7 @@ router.post("/create-checkout-session", async (req, res) => {
       // After payment succeeds, Stripe redirects here.
       // {CHECKOUT_SESSION_ID} is a Stripe placeholder — it fills it in automatically.
       // We use it in /success to retrieve the session and confirm payment details.
-      success_url: `${process.env.BACK_END_URL}payments/success?session_id={CHECKOUT_SESSION_ID}&eventId=${eventId}`,
+      success_url: `${process.env.FRONT_END_URL}success?session_id={CHECKOUT_SESSION_ID}&eventId=${eventId}`,
       cancel_url: `${process.env.FRONT_END_URL}events/${eventId}`,
 
       // Store eventId, email, quantity in metadata so we can access them
@@ -119,22 +119,31 @@ router.get("/success", async (req, res) => {
     // create duplicate tickets. This handles page refreshes gracefully.
     const existingTicket = await Ticket.findOne({ paymentId: session.id });
     if (existingTicket) {
-      return res.redirect(`${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}`);
+      return res.redirect(`${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}&ticket_id=${existingTicket._id}`);
     }
 
     const { email, quantity } = session.metadata;
     const qty = parseInt(quantity, 10);
     const amountPaid = session.amount_total / 100; // convert pence back to pounds
 
-    // Save the ticket to our database
-    const ticket = new Ticket({
-      eventId,
-      buyerEmail: email,
-      paymentId: session.id, // Stripe session ID used as payment reference
-      status: "paid",
-      quantity: qty,
-    });
-    await ticket.save();
+    // Look up the user by email to link the ticket to their account
+    const User = require("../models/User");
+    const user = await User.findOne({ email });
+
+    // Create individual tickets for each quantity (not one ticket with quantity field)
+    const createdTickets = [];
+    for (let i = 0; i < qty; i++) {
+      const ticket = new Ticket({
+        eventId,
+        buyerEmail: email,
+        paymentId: session.id, // All tickets from this order share the same payment ID
+        status: "paid",
+        quantity: 1, // Each individual ticket represents 1 unit
+        user: user?._id ?? null,
+      });
+      await ticket.save();
+      createdTickets.push(ticket);
+    }
 
     // Update the event — decrement available tickets and add to revenue
     const event = await Event.findById(eventId);
@@ -144,9 +153,9 @@ router.get("/success", async (req, res) => {
       await event.save();
     }
 
-    // Redirect to frontend confirmation page.
-    // Stripe has already emailed the receipt to the customer automatically.
-    res.redirect(`${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}`);
+    // Redirect to frontend confirmation page with the FIRST ticket ID
+    // User can view all their tickets from their profile
+    res.redirect(`${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}&ticket_id=${createdTickets[0]._id}`);
   } catch (err) {
     console.error("Stripe success handler error:", err);
     res.status(500).json({ error: "Failed to process payment confirmation" });
