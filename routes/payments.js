@@ -119,22 +119,31 @@ router.get("/success", async (req, res) => {
     // create duplicate tickets. This handles page refreshes gracefully.
     const existingTicket = await Ticket.findOne({ paymentId: session.id });
     if (existingTicket) {
-      return res.redirect(`${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}`);
+      return res.redirect(`${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}&ticket_id=${existingTicket._id}`);
     }
 
     const { email, quantity } = session.metadata;
     const qty = parseInt(quantity, 10);
     const amountPaid = session.amount_total / 100; // convert pence back to pounds
 
-    // Save the ticket to our database
-    const ticket = new Ticket({
-      eventId,
-      buyerEmail: email,
-      paymentId: session.id, // Stripe session ID used as payment reference
-      status: "paid",
-      quantity: qty,
-    });
-    await ticket.save();
+    // Look up the user by email to link the tickets to their account
+    const User = require("../models/User");
+    const user = await User.findOne({ email });
+
+    // Create N separate ticket records (one per ticket in the bulk purchase)
+    // All tickets from the same purchase share the same paymentId
+    const ticketIds = [];
+    for (let i = 0; i < qty; i++) {
+      const ticket = new Ticket({
+        eventId,
+        buyerEmail: email,
+        paymentId: session.id, // Stripe session ID used for grouping
+        status: "paid",
+        user: user?._id ?? null,
+      });
+      await ticket.save();
+      ticketIds.push(ticket._id);
+    }
 
     // Update the event — decrement available tickets and add to revenue
     const event = await Event.findById(eventId);
@@ -144,9 +153,9 @@ router.get("/success", async (req, res) => {
       await event.save();
     }
 
-    // Redirect to frontend confirmation page.
+    // Redirect to frontend confirmation page with the first ticket (they'll all have same paymentId)
     // Stripe has already emailed the receipt to the customer automatically.
-    res.redirect(`${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}`);
+    res.redirect(`${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}&ticket_id=${ticketIds[0]}`);
   } catch (err) {
     console.error("Stripe success handler error:", err);
     res.status(500).json({ error: "Failed to process payment confirmation" });
