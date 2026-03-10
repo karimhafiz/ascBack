@@ -14,9 +14,10 @@ const ticketSchema = new mongoose.Schema({
   buyerEmail: { type: String },
   status:     { type: String, default: "pending" },
   user:       { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  paymentId:  { type: String }, // Stripe session ID — used for idempotency checks
-  quantity:   { type: Number, default: 1 },
+  paymentId:  { type: String }, // Stripe session ID — used for grouping bulk purchase tickets
   ticketCode: { type: String, unique: true, sparse: true }, // TKT-XXXXXX
+  checkedIn:  { type: Boolean, default: false },
+  checkedInAt: { type: Date },
 }, { timestamps: true });
 
 // Auto-generate ticketCode before saving if not already set
