@@ -11,7 +11,16 @@ router.post("/event/:eventId/signup", teamController.signupTeam);
 // Process payment for a team
 router.post("/:teamId/pay", teamController.processTeamPayment);
 
+// Stripe success redirect — marks team as paid
+router.get("/:teamId/payment-success", teamController.handlePaymentSuccess);
+
+// Stripe cancel redirect — deletes unpaid team, returns to event page
+router.get("/:teamId/cancel", teamController.cancelTeamPayment);
+
 // List all paid teams for an event
 router.get("/event/:eventId/teams", teamController.getTeamsForEvent);
+
+// Get unpaid teams for a manager on a specific event (for resuming registration)
+router.get("/event/:eventId/unpaid", teamController.getUnpaidTeamsForManager);
 
 module.exports = router;
