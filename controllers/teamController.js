@@ -8,23 +8,39 @@ exports.getTeam = async (req, res) => {
   try {
     const { teamId } = req.params;
     const team = await Team.findById(teamId);
-    if (!team) {
-      return res.status(404).json({ error: "Team not found" });
-    }
+    if (!team) return res.status(404).json({ error: "Team not found" });
     res.json({ team });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-// Sign up a team for an event
+// Sign up a team for an event.
+// If an unpaid team already exists for this manager + event, reuse it
+// instead of creating a duplicate (handles user going back from Stripe).
 exports.signupTeam = async (req, res) => {
   try {
-    const { name, members, manager, paymentId } = req.body;
+    const { name, members, manager } = req.body;
     const { eventId } = req.params;
 
     if (!name || !members || !Array.isArray(members) || members.length === 0) {
       return res.status(400).json({ error: "Team name and members are required" });
+    }
+
+    // Check for an existing unpaid team from this manager for this event
+    const existing = await Team.findOne({
+      event: eventId,
+      "manager.email": manager.email,
+      paid: false,
+    });
+
+    if (existing) {
+      // Update it with fresh details in case they changed anything
+      existing.name = name;
+      existing.members = members;
+      existing.manager = manager;
+      await existing.save();
+      return res.status(200).json({ message: "Existing team updated", team: existing });
     }
 
     const team = new Team({
@@ -32,8 +48,8 @@ exports.signupTeam = async (req, res) => {
       members,
       event: eventId,
       manager,
-      paid: !!paymentId,
-      paymentId: paymentId || null,
+      paid: false,
+      paymentId: null,
     });
 
     await team.save();
@@ -45,24 +61,19 @@ exports.signupTeam = async (req, res) => {
 
 // ─── POST /teams/:teamId/pay ──────────────────────────────────────────────────
 // Creates a Stripe Checkout session for a team registration fee.
-// Same flow as ticket payments — redirects to Stripe's hosted page.
-// On success, Stripe redirects to team-confirmation with the session ID.
+// cancel_url goes through our backend so we can delete the unpaid team cleanly.
 // ─────────────────────────────────────────────────────────────────────────────
 exports.processTeamPayment = async (req, res) => {
   try {
     const { teamId } = req.params;
 
     const team = await Team.findById(teamId);
-    if (!team) {
-      return res.status(404).json({ error: "Team not found" });
-    }
+    if (!team) return res.status(404).json({ error: "Team not found" });
 
     const event = await Event.findById(team.event);
-    if (!event) {
-      return res.status(404).json({ error: "Event not found" });
-    }
+    if (!event) return res.status(404).json({ error: "Event not found" });
 
-    const amount = event.tournamentFee || 50; // default £50 if not set
+    const amount = event.ticketPrice || event.tournamentFee || 50;
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
@@ -73,16 +84,16 @@ exports.processTeamPayment = async (req, res) => {
             currency: "gbp",
             product_data: {
               name: `Team Registration — ${event.title}`,
-              description: `Team: ${team.name}`,
+              description: `Team: ${team.name} (${team.members.length} players)`,
             },
-            unit_amount: Math.round(amount * 100), // pence
+            unit_amount: Math.round(amount * 100),
           },
           quantity: 1,
         },
       ],
       mode: "payment",
-      success_url: `${process.env.FRONT_END_URL}team-confirmation?session_id={CHECKOUT_SESSION_ID}&teamId=${teamId}`,
-      cancel_url: `${process.env.FRONT_END_URL}events/${team.event}`,
+      success_url: `${process.env.BACK_END_URL}teams/${teamId}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.BACK_END_URL}teams/${teamId}/cancel`,
       metadata: {
         teamId: teamId.toString(),
         eventId: team.event.toString(),
@@ -92,6 +103,74 @@ exports.processTeamPayment = async (req, res) => {
     res.json({ url: session.url });
   } catch (error) {
     console.error("Team payment error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ─── GET /teams/:teamId/payment-success ───────────────────────────────────────
+// Stripe redirects here after successful payment.
+// Verifies the session, marks team as paid, then sends user to confirmation page.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.handlePaymentSuccess = async (req, res) => {
+  const { teamId } = req.params;
+  const { session_id } = req.query;
+
+  try {
+    const session = await stripe.checkout.sessions.retrieve(session_id);
+
+    if (session.payment_status !== "paid") {
+      return res.redirect(`${process.env.FRONT_END_URL}events`);
+    }
+
+    await Team.findByIdAndUpdate(teamId, {
+      paid: true,
+      paymentId: session.id,
+    });
+
+    res.redirect(`${process.env.FRONT_END_URL}team-confirmation?teamId=${teamId}`);
+  } catch (error) {
+    console.error("Team payment success error:", error);
+    res.redirect(`${process.env.FRONT_END_URL}events`);
+  }
+};
+
+// ─── GET /teams/:teamId/cancel ────────────────────────────────────────────────
+// Stripe redirects here when user clicks "Back" on the Stripe page.
+// Deletes the unpaid team so it doesn't linger in the DB, then sends the
+// user back to the event page to try again if they want.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.cancelTeamPayment = async (req, res) => {
+  const { teamId } = req.params;
+
+  try {
+    const team = await Team.findById(teamId);
+    if (team && !team.paid) {
+      const eventId = team.event;
+      await Team.findByIdAndDelete(teamId);
+      return res.redirect(`${process.env.FRONT_END_URL}events/${eventId}`);
+    }
+    // If team is already paid (shouldn't happen), just redirect home
+    res.redirect(`${process.env.FRONT_END_URL}events`);
+  } catch (error) {
+    console.error("Team cancel error:", error);
+    res.redirect(`${process.env.FRONT_END_URL}events`);
+  }
+};
+
+// Get unpaid teams for a specific manager on an event
+exports.getUnpaidTeamsForManager = async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { email } = req.query;
+    if (!email) return res.status(400).json({ error: "email query param required" });
+
+    const teams = await Team.find({
+      event: eventId,
+      "manager.email": email,
+      paid: false,
+    });
+    res.json({ teams });
+  } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
