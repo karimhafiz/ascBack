@@ -89,30 +89,7 @@ router.get("/by-payment/:paymentId", authenticateToken, async (req, res) => {
   }
 });
 
-// GET /tickets/:id — fetch a single ticket by _id, auth required (owner only)
-router.get("/:id", authenticateToken, async (req, res) => {
-  try {
-    const ticket = await Ticket.findById(req.params.id)
-      .populate("eventId", "title date street city postCode images ticketPrice typeOfEvent openingTime")
-      .populate("user", "name email");
 
-    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
-
-    const requestingUser = req.user;
-    const isOwner = ticket.buyerEmail === requestingUser.email ||
-                    ticket.user?._id?.toString() === requestingUser.id;
-    const isStaff = requestingUser.role === "admin" || requestingUser.role === "moderator";
-
-    if (!isOwner && !isStaff) {
-      return res.status(403).json({ message: "Access denied" });
-    }
-
-    res.json(ticket);
-  } catch (err) {
-    console.error("Error fetching ticket:", err);
-    res.status(500).json({ message: err.message });
-  }
-});
 
 // PUBLIC: GET /tickets/verify/:ticketCode
 router.get("/verify/:ticketCode", async (req, res) => {
@@ -154,6 +131,31 @@ router.post("/verify/:ticketCode/checkin", async (req, res) => {
     res.json(response);
   } catch (err) {
     console.error("Error checking in ticket:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /tickets/:id — fetch a single ticket by _id, auth required (owner only)
+router.get("/:id", authenticateToken, async (req, res) => {
+  try {
+    const ticket = await Ticket.findById(req.params.id)
+      .populate("eventId", "title date street city postCode images ticketPrice typeOfEvent openingTime")
+      .populate("user", "name email");
+
+    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+
+    const requestingUser = req.user;
+    const isOwner = ticket.buyerEmail === requestingUser.email ||
+                    ticket.user?._id?.toString() === requestingUser.id;
+    const isStaff = requestingUser.role === "admin" || requestingUser.role === "moderator";
+
+    if (!isOwner && !isStaff) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    res.json(ticket);
+  } catch (err) {
+    console.error("Error fetching ticket:", err);
     res.status(500).json({ message: err.message });
   }
 });
