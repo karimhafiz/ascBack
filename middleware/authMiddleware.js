@@ -14,7 +14,6 @@ function authenticateToken(req, res, next) {
   console.log("AUTH MIDDLEWARE: headers:", req.headers);
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
-  console.log("AUTH MIDDLEWARE: token:", token);
 
   if (!token) {
     return res.status(401).json({ message: "Token is missing" });
