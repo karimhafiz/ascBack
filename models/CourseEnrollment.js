@@ -8,6 +8,13 @@ const courseEnrollmentSchema = new mongoose.Schema(
     buyerName: { type: String },
     paymentId: { type: String },
     status: { type: String, enum: ["paid", "free"], default: "paid" },
+    participants: [
+      {
+        name: { type: String, required: true },
+        age: { type: Number },
+        email: { type: String },
+      }
+    ],
   },
   { timestamps: true }
 );
