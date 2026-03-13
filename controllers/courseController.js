@@ -1,7 +1,7 @@
 const Course = require("../models/Course");
 const CourseEnrollment = require("../models/CourseEnrollment");
 const User = require("../models/User");
-const cloudinary = require("../config/cloudinary");
+const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 exports.getAllCourses = async (req, res) => {
@@ -54,11 +54,8 @@ exports.updateCourse = async (req, res) => {
 
     let imagePath = null;
     if (req.file) {
-      // Delete old image from Cloudinary
       if (course.images && course.images.length > 0) {
-        const urlParts = course.images[0].split("/");
-        const publicId = urlParts[urlParts.length - 1].split(".")[0];
-        try { await cloudinary.uploader.destroy(`course-images/${publicId}`); } catch {}
+        await deleteCloudinaryImage(course.images[0], "course-images");
       }
       imagePath = req.file.secure_url || req.file.path;
     }
@@ -84,11 +81,8 @@ exports.deleteCourse = async (req, res) => {
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ message: "Course not found" });
 
-    if (course.images && course.images.length > 0) {
-      for (const url of course.images) {
-        const publicId = url.split("/").pop().split(".")[0];
-        try { await cloudinary.uploader.destroy(`course-images/${publicId}`); } catch {}
-      }
+    for (const url of course.images || []) {
+      await deleteCloudinaryImage(url, "course-images");
     }
     await Course.findByIdAndDelete(req.params.id);
     res.json({ message: "Course deleted" });

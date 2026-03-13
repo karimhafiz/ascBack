@@ -1,7 +1,6 @@
 const Event = require("../models/Event");
-const path = require("path");
-const fs = require("fs");
 const cloudinary = require("../config/cloudinary");
+const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
 
 // Get all events
 exports.getAllEvents = async (req, res) => {
@@ -18,11 +17,11 @@ exports.getEventById = async (req, res) => {
   try {
     const event = await Event.findById(req.params.id);
     if (!event) {
-      return res.status(404).json({ message: "Event not found" });
+      return res.status(404).json({ error: "Event not found" });
     }
-    res.status(200).json(event);
+    res.json(event);
   } catch (error) {
-    res.status(500).json({ message: "Failed to fetch event", error: error.message });
+    res.status(500).json({ error: error.message });
   }
 };
 
@@ -40,57 +39,19 @@ exports.createEvent = async (req, res) => {
       return res.status(400).json({ error: "Invalid JSON in eventData" });
     }
 
-    const {
-      title,
-      shortDescription,
-      longDescription,
-      date,
-      openingTime,
-      street,
-      postCode,
-      city,
-      ageRestriction,
-      accessibilityInfo,
-      ticketPrice,
-      ticketsAvailable,
-      featured,
-      isReoccurring,
-      reoccurringStartDate,
-      reoccurringEndDate,
-      reoccurringFrequency,
-      dayOfWeek,
-      typeOfEvent,
-      isTournament,
-    } = eventData;
-
     let imageUrl = null;
     if (req.file) {
       imageUrl = req.file.path;
     }
 
     const newEvent = new Event({
-      title,
-      shortDescription,
-      longDescription,
-      date,
-      openingTime,
-      street,
-      postCode,
-      city,
-      ageRestriction,
-      accessibilityInfo,
-      ticketPrice,
-      ...(ticketsAvailable !== undefined && { ticketsAvailable }),
-      featured: featured === true || featured === "true",
-      isReoccurring: isReoccurring === true || isReoccurring === "true",
-      reoccurringStartDate,
-      reoccurringEndDate,
-      reoccurringFrequency,
-      dayOfWeek,
+      ...eventData,
+      featured: eventData.featured === true || eventData.featured === "true",
+      isReoccurring: eventData.isReoccurring === true || eventData.isReoccurring === "true",
+      isTournament: eventData.isTournament === true || eventData.isTournament === "true",
+      ...(eventData.ticketsAvailable !== undefined && { ticketsAvailable: eventData.ticketsAvailable }),
       images: imageUrl ? [imageUrl] : [],
       createdBy: req.user.id,
-      typeOfEvent,
-      isTournament: isTournament === true || isTournament === "true",
     });
 
     await newEvent.save();
@@ -103,46 +64,17 @@ exports.createEvent = async (req, res) => {
 // Update an event
 exports.updateEvent = async (req, res) => {
   try {
-    const {
-      title,
-      shortDescription,
-      longDescription,
-      date,
-      openingTime,
-      street,
-      postCode,
-      city,
-      ageRestriction,
-      accessibilityInfo,
-      ticketPrice,
-      ticketsAvailable,
-      featured,
-      isReoccurring,
-      reoccurringStartDate,
-      reoccurringEndDate,
-      reoccurringFrequency,
-      dayOfWeek,
-      typeOfEvent,
-      isTournament,
-    } = JSON.parse(req.body.eventData);
+    const eventData = JSON.parse(req.body.eventData);
 
     const event = await Event.findById(req.params.id);
     if (!event) {
-      return res.status(404).json({ message: "Event not found" });
+      return res.status(404).json({ error: "Event not found" });
     }
 
     let imagePath = null;
     if (req.file) {
       if (event.images && event.images.length > 0) {
-        const urlParts = event.images[0].split("/");
-        const publicIdWithExtension = urlParts[urlParts.length - 1];
-        const publicId = publicIdWithExtension.split(".")[0];
-        const fullPublicId = `event-images/${publicId}`;
-        try {
-          await cloudinary.uploader.destroy(fullPublicId);
-        } catch (err) {
-          console.error("Failed to delete old image from Cloudinary:", err);
-        }
+        await deleteCloudinaryImage(event.images[0], "event-images");
       }
       imagePath = req.file.path;
     }
@@ -150,26 +82,11 @@ exports.updateEvent = async (req, res) => {
     const updatedEvent = await Event.findByIdAndUpdate(
       req.params.id,
       {
-        title,
-        shortDescription,
-        longDescription,
-        date,
-        openingTime,
-        street,
-        postCode,
-        city,
-        ageRestriction,
-        accessibilityInfo,
-        ticketPrice,
-        ...(ticketsAvailable !== undefined && { ticketsAvailable }),
-        featured: featured === true || featured === "true",
-        isReoccurring: isReoccurring === true || isReoccurring === "true",
-        reoccurringStartDate,
-        reoccurringEndDate,
-        reoccurringFrequency,
-        dayOfWeek,
-        typeOfEvent,
-        isTournament: isTournament === true || isTournament === "true",
+        ...eventData,
+        featured: eventData.featured === true || eventData.featured === "true",
+        isReoccurring: eventData.isReoccurring === true || eventData.isReoccurring === "true",
+        isTournament: eventData.isTournament === true || eventData.isTournament === "true",
+        ...(eventData.ticketsAvailable !== undefined && { ticketsAvailable: eventData.ticketsAvailable }),
         images: imagePath ? [imagePath] : event.images,
       },
       { new: true }
@@ -187,21 +104,11 @@ exports.deleteEvent = async (req, res) => {
   try {
     const event = await Event.findById(req.params.id);
     if (!event) {
-      return res.status(404).json({ message: "Event not found" });
+      return res.status(404).json({ error: "Event not found" });
     }
 
-    if (event.images && event.images.length > 0) {
-      for (const imageUrl of event.images) {
-        const urlParts = imageUrl.split("/");
-        const publicIdWithExtension = urlParts[urlParts.length - 1];
-        const publicId = publicIdWithExtension.split(".")[0];
-        const fullPublicId = `event-images/${publicId}`;
-        try {
-          await cloudinary.uploader.destroy(fullPublicId);
-        } catch (err) {
-          console.error("Failed to delete image from Cloudinary:", err);
-        }
-      }
+    for (const imageUrl of event.images || []) {
+      await deleteCloudinaryImage(imageUrl, "event-images");
     }
 
     await Event.findByIdAndDelete(req.params.id);
