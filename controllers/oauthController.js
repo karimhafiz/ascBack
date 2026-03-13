@@ -1,6 +1,10 @@
 const { OAuth2Client } = require("google-auth-library");
-const jwt = require("jsonwebtoken");
 const User = require("../models/User");
+const {
+  generateAccessToken,
+  generateRefreshToken,
+  setRefreshTokenCookie,
+} = require("../utils/tokenUtils");
 
 // Initialize a client with the client ID from environment
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -28,23 +32,28 @@ exports.googleLogin = async (req, res) => {
         // find or create the user
         let user = await User.findOne({ email });
         if (!user) {
-            user = new User({ name: name || email, email, googleId });
+            user = new User({ name: name || email, email, googleId, authProvider: "google" });
             await user.save();
         } else if (!user.googleId) {
             // if existing user did not have googleId, store it
             user.googleId = googleId;
+            if (user.authProvider === "local" && !user.password) {
+                user.authProvider = "google";
+            }
             await user.save();
         }
 
-        const jwtToken = jwt.sign(
-            { id: user._id, role: user.role,  email: user.email },
-            process.env.JWT_SECRET,
-            { expiresIn: "1h" }
-        );
+        const accessToken = generateAccessToken(user);
+        const refreshToken = generateRefreshToken();
+
+        user.refreshToken = refreshToken;
+        await user.save();
+
+        setRefreshTokenCookie(res, refreshToken);
 
         res.json({
-            token: jwtToken,
-            user: { id: user._id, name: user.name, email: user.email, picture },
+            accessToken,
+            user: { id: user._id, name: user.name, email: user.email, role: user.role, picture },
         });
     } catch (err) {
         console.error("Google login error", err);
