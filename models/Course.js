@@ -20,6 +20,9 @@ const courseSchema = new mongoose.Schema(
     maxEnrollment: { type: Number },
     currentEnrollment: { type: Number, default: 0 },
     enrollmentOpen: { type: Boolean, default: true },
+    isSubscription: { type: Boolean, default: false },
+    stripeProductId: { type: String }, // Stripe Product ID for subscription pricing
+    stripePriceId: { type: String },   // Stripe recurring Price ID
     featured: { type: Boolean, default: false },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },

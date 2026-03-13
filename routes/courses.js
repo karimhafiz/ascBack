@@ -5,23 +5,30 @@ const authMiddleware = require("../middleware/authMiddleware");
 const authorize = require("../middleware/authorize");
 const upload = require("../config/multer");
 
-
 // Public — list all
 router.get("/", courseController.getAllCourses);
 
-// Stripe redirect — must be before /:id to avoid being swallowed by it
+// Stripe webhook — must use raw body, registered before express.json() in index.js
+router.post("/webhook", express.raw({ type: "application/json" }), courseController.handleWebhook);
+
+// Stripe redirect — must be before /:id
 router.get("/:courseId/enrollment-success", courseController.handleEnrollmentSuccess);
 
 // Admin/mod — view enrollments for a course
 router.get("/:courseId/enrollments", authMiddleware, authorize("admin", "moderator"), courseController.getCourseEnrollments);
 
-// authMiddlewared — enroll
+// authenticated — enroll
 router.post("/:courseId/enroll", authMiddleware, courseController.enrollInCourse);
 
-// Public — single course (after subroutes so /:id doesn't eat them)
+// authenticated — cancel subscription
+router.post("/enrollments/:enrollmentId/cancel", authMiddleware, courseController.cancelSubscription);
+
+// authenticated — remove a participant from enrollment
+router.post("/enrollments/:enrollmentId/remove-participant", authMiddleware, courseController.removeParticipant);
+
+// Public — single course
 router.get("/:id", courseController.getCourseById);
 
-// Admin/mod — manage courses
 // Admin/mod — manage courses
 router.post("/", upload.single("image"), authMiddleware, authorize("admin", "moderator"), courseController.createCourse);
 router.put("/:id", upload.single("image"), authMiddleware, authorize("admin", "moderator"), courseController.updateCourse);

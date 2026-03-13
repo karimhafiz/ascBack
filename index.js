@@ -8,6 +8,9 @@ connectDB();
 const cors = require("cors");
 
 const app = express();
+
+app.use("/courses/webhook", express.raw({ type: "application/json" }));
+
 app.use(express.json());
 
 // Update this:
