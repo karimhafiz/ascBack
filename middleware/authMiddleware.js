@@ -1,17 +1,6 @@
 const jwt = require("jsonwebtoken");
 
-function generateToken(user) {
-  return jwt.sign(
-    { id: user._id, role: user.role },
-    process.env.JWT_SECRET,
-    {
-      expiresIn: "1h",
-    }
-  );
-}
-
 function authenticateToken(req, res, next) {
-  // console.log("AUTH MIDDLEWARE: headers:", req.headers);
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
 
@@ -21,8 +10,6 @@ function authenticateToken(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    // console.log("AUTH MIDDLEWARE: decoded:", decoded);
-    // always attach user payload to req.user
     req.user = decoded;
     next();
   } catch (err) {
@@ -31,6 +18,4 @@ function authenticateToken(req, res, next) {
   }
 }
 
-
-
-module.exports =  authenticateToken;
+module.exports = authenticateToken;

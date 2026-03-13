@@ -6,12 +6,14 @@ const connectDB = require("./config/db"); // Import the database connection func
 connectDB();
 
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
 
 const app = express();
 
 app.use("/courses/webhook", express.raw({ type: "application/json" }));
 
 app.use(express.json());
+app.use(cookieParser());
 
 // Update this:
 app.use(

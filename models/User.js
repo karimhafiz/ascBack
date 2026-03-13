@@ -5,13 +5,19 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, unique: true, required: true },
   password: { type: String, required: false, default: null},
-  role: { 
-    type: String, 
+  authProvider: {
+    type: String,
+    enum: ["local", "google"],
+    default: "local"
+  },
+  role: {
+    type: String,
     enum: ["user", "moderator", "admin"],
     default: "user"
   },
   isActive: { type: Boolean, default: true },
   isBanned: { type: Boolean, default: false },
+  refreshToken: { type: String, default: null },
 
 }, { timestamps: true });
 
