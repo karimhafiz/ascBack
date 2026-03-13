@@ -1,5 +1,5 @@
-const cloudinary = require("../config/cloudinary");
-PageContent = require("../models/PageContent");
+const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
+const PageContent = require("../models/PageContent");
 
 // GET /content/:page — public, used by frontend to load page content
 exports.getPageContent = async (req, res) => {
@@ -7,7 +7,6 @@ exports.getPageContent = async (req, res) => {
         const { page } = req.params;
         const content = await PageContent.findOne({ page });
         if (!content) {
-            // Return empty object — frontend falls back to hardcoded defaults
             return res.json({});
         }
         res.json(content);
@@ -31,20 +30,12 @@ exports.updatePageContent = async (req, res) => {
 
         // Handle image upload for heroImage (home page)
         if (req.file && page === "home") {
-            // Delete old heroImage from Cloudinary if exists
             const existing = await PageContent.findOne({ page: "home" });
             if (existing?.heroImage) {
-                try {
-                    const parts = existing.heroImage.split("/");
-                    const filename = parts[parts.length - 1].split(".")[0];
-                    await cloudinary.uploader.destroy(`page-images/${filename}`);
-                } catch (err) {
-                    console.error("Failed to delete old hero image:", err);
-                }
+                await deleteCloudinaryImage(existing.heroImage, "page-images");
             }
             updates.heroImage = req.file.secure_url;
         }
-
 
         // Handle activity card image uploads (about page)
         // Expects files as activityImage_0, activityImage_1 etc.
@@ -63,8 +54,7 @@ exports.updatePageContent = async (req, res) => {
                 }));
             }
         }
-        console.log("req.files:", req.files);
-        console.log("req.file:", req.file);
+
         const content = await PageContent.findOneAndUpdate(
             { page },
             { $set: updates },

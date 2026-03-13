@@ -1,7 +1,6 @@
 const Team = require("../models/Team");
 const Event = require("../models/Event");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-require("dotenv").config();
 
 // Get a single team by ID
 exports.getTeam = async (req, res) => {

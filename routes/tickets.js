@@ -6,21 +6,29 @@ const authenticateToken = require("../middleware/authMiddleware");
 
 // Buy a ticket
 router.post("/", authenticateToken, async (req, res) => {
-  const { eventId, buyerEmail } = req.body;
-  const userId = req.user ? req.user.id : null;
+  try {
+    const { eventId, buyerEmail } = req.body;
+    const userId = req.user ? req.user.id : null;
 
-  const event = await Event.findById(eventId);
-  if (!event || event.ticketsAvailable <= 0) {
-    return res.status(400).json({ message: "Tickets sold out or event not found" });
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+    if (event.ticketsAvailable <= 0) {
+      return res.status(400).json({ error: "Tickets sold out" });
+    }
+
+    const ticket = new Ticket({ eventId, buyerEmail, user: userId });
+    await ticket.save();
+
+    event.ticketsAvailable -= 1;
+    await event.save();
+
+    res.status(201).json(ticket);
+  } catch (error) {
+    console.error("Error buying ticket:", error);
+    res.status(500).json({ error: error.message });
   }
-
-  const ticket = new Ticket({ eventId, buyerEmail, user: userId });
-  await ticket.save();
-
-  event.ticketsAvailable -= 1;
-  await event.save();
-
-  res.status(201).json(ticket);
 });
 
 // Fetch all tickets (aggregated)
