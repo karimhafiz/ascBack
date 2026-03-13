@@ -8,6 +8,9 @@ connectDB();
 const cors = require("cors");
 
 const app = express();
+
+app.use("/courses/webhook", express.raw({ type: "application/json" }));
+
 app.use(express.json());
 
 // Update this:
@@ -31,6 +34,7 @@ const usersRoutes = require("./routes/users");
 const teamsRoutes = require("./routes/teams");
 const adminRoutes = require("./routes/admin");
 const pageContentRoutes = require("./routes/pageContent");
+const courseRoutes = require("./routes/courses");
 
 
 app.use("/payments", paymentRoutes);
@@ -40,11 +44,16 @@ app.use("/users", usersRoutes);
 app.use("/admin", adminRoutes);
 app.use("/teams", teamsRoutes);
 app.use("/pageContent", pageContentRoutes);
+app.use("/courses", courseRoutes);
 
 app.get("/", (req, res) => {
   res.send("Event Ticketing API is running...");
 });
 
+app.use((err, req, res, next) => {
+  console.error("GLOBAL ERROR:", err.message, err.stack);
+  res.status(500).json({ error: err.message });
+});
 app.listen(process.env.PORT || 5000, () => {
   console.log(`Server is running on port ${process.env.PORT || 5000}`);
 });

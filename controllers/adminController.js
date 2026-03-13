@@ -1,5 +1,7 @@
 const User   = require("../models/User");
 const Ticket = require("../models/Ticket");
+const CourseEnrollment = require("../models/CourseEnrollment");
+const Course = require("../models/Course");
 const Team   = require("../models/Team");
 const Event  = require("../models/Event");
 
@@ -23,7 +25,13 @@ exports.getDashboard = async (req, res) => {
       .populate("event", "title date")
       .sort({ createdAt: -1 });
 
-    const payload = { tickets, events, teams };
+    const enrollments = await CourseEnrollment.find()
+      .populate("courseId", "title instructor category price")
+      .sort({ createdAt: -1 });
+
+    const courses = await Course.find({}, "title instructor category price currentEnrollment maxEnrollment enrollmentOpen");
+
+    const payload = { tickets, events, teams, enrollments, courses };
 
     // User list — admins only
     if (req.user.role === "admin") {

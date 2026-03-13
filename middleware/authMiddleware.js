@@ -11,10 +11,9 @@ function generateToken(user) {
 }
 
 function authenticateToken(req, res, next) {
-  console.log("AUTH MIDDLEWARE: headers:", req.headers);
+  // console.log("AUTH MIDDLEWARE: headers:", req.headers);
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
-  console.log("AUTH MIDDLEWARE: token:", token);
 
   if (!token) {
     return res.status(401).json({ message: "Token is missing" });
@@ -22,7 +21,7 @@ function authenticateToken(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    console.log("AUTH MIDDLEWARE: decoded:", decoded);
+    // console.log("AUTH MIDDLEWARE: decoded:", decoded);
     // always attach user payload to req.user
     req.user = decoded;
     next();
