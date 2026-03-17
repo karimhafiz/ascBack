@@ -1,4 +1,4 @@
-const Event = require("./Event");
+const Event = require("../../models/Event");
 
 describe("Event Model", () => {
   it("should validate a correct event", () => {
