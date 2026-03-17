@@ -104,8 +104,13 @@ exports.enrollInCourse = async (req, res) => {
     const course = await Course.findById(req.params.courseId);
     if (!course) return res.status(404).json({ error: "Course not found" });
     if (!course.enrollmentOpen) return res.status(400).json({ error: "Enrollment is closed" });
-    if (course.maxEnrollment && course.currentEnrollment + participants.length > course.maxEnrollment) {
-      return res.status(400).json({ error: `Only ${course.maxEnrollment - course.currentEnrollment} spots remaining` });
+    if (
+      course.maxEnrollment &&
+      course.currentEnrollment + participants.length > course.maxEnrollment
+    ) {
+      return res
+        .status(400)
+        .json({ error: `Only ${course.maxEnrollment - course.currentEnrollment} spots remaining` });
     }
 
     const existing = await CourseEnrollment.findOne({
@@ -115,7 +120,12 @@ exports.enrollInCourse = async (req, res) => {
     });
     if (existing) {
       if (existing.status === "past_due") {
-        return res.status(400).json({ error: "You have a pending payment for this course. Please resolve it before re-enrolling." });
+        return res
+          .status(400)
+          .json({
+            error:
+              "You have a pending payment for this course. Please resolve it before re-enrolling.",
+          });
       }
       return res.status(400).json({ error: "You are already enrolled in this course" });
     }
@@ -168,7 +178,12 @@ exports.enrollInCourse = async (req, res) => {
         mode: "subscription",
         success_url: `${process.env.BACK_END_URL}courses/${course._id}/enrollment-success?session_id={CHECKOUT_SESSION_ID}&email=${encodeURIComponent(email)}&participants=${participantsJson}`,
         cancel_url: `${process.env.FRONT_END_URL}courses/${course._id}`,
-        metadata: { courseId: course._id.toString(), email, count: count.toString(), isSubscription: "true" },
+        metadata: {
+          courseId: course._id.toString(),
+          email,
+          count: count.toString(),
+          isSubscription: "true",
+        },
       });
       return res.json({ url: session.url });
     }
@@ -177,19 +192,22 @@ exports.enrollInCourse = async (req, res) => {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       customer_email: email,
-      line_items: [{
-        price_data: {
-          currency: "gbp",
-          product_data: {
-            name: `Enroll: ${course.title}`,
-            description: count > 1
-              ? `${count} people — ${participants.map(p => p.name).join(", ")}`
-              : participants[0].name,
+      line_items: [
+        {
+          price_data: {
+            currency: "gbp",
+            product_data: {
+              name: `Enroll: ${course.title}`,
+              description:
+                count > 1
+                  ? `${count} people — ${participants.map((p) => p.name).join(", ")}`
+                  : participants[0].name,
+            },
+            unit_amount: Math.round(course.price * 100),
           },
-          unit_amount: Math.round(course.price * 100),
+          quantity: count,
         },
-        quantity: count,
-      }],
+      ],
       mode: "payment",
       success_url: `${process.env.BACK_END_URL}courses/${course._id}/enrollment-success?session_id={CHECKOUT_SESSION_ID}&email=${encodeURIComponent(email)}&participants=${participantsJson}`,
       cancel_url: `${process.env.FRONT_END_URL}courses/${course._id}`,
@@ -214,13 +232,15 @@ exports.handleEnrollmentSuccess = async (req, res) => {
 
     // Idempotency — don't create duplicate enrollments
     const existing = await CourseEnrollment.findOne({ paymentId: session.id });
-    if (existing) return res.redirect(`${process.env.FRONT_END_URL}course-confirmation?courseId=${courseId}`);
+    if (existing)
+      return res.redirect(`${process.env.FRONT_END_URL}course-confirmation?courseId=${courseId}`);
 
     const user = await User.findOne({ email });
     let participants = [];
-    try {
-      if (req.query.participants) participants = JSON.parse(decodeURIComponent(req.query.participants));
-    } catch {}
+
+    if (req.query.participants)
+      participants = JSON.parse(decodeURIComponent(req.query.participants));
+
     const count = participants.length || parseInt(session.metadata?.count || "1", 10);
     const isSubscription = session.metadata?.isSubscription === "true";
 
@@ -257,8 +277,10 @@ exports.handleEnrollmentSuccess = async (req, res) => {
 
 exports.getCourseEnrollments = async (req, res) => {
   try {
-    const enrollments = await CourseEnrollment.find({ courseId: req.params.courseId })
-      .populate("user", "name email");
+    const enrollments = await CourseEnrollment.find({ courseId: req.params.courseId }).populate(
+      "user",
+      "name email"
+    );
     res.json(enrollments);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -298,7 +320,8 @@ exports.cancelSubscription = async (req, res) => {
     });
 
     res.json({
-      message: "Subscription cancelled. You will retain access until the end of your current billing period.",
+      message:
+        "Subscription cancelled. You will retain access until the end of your current billing period.",
       currentPeriodEnd: enrollment.currentPeriodEnd,
     });
   } catch (err) {
@@ -384,11 +407,7 @@ exports.handleWebhook = async (req, res) => {
   let event;
 
   try {
-    event = stripe.webhooks.constructEvent(
-      req.body,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
     console.error("Webhook signature error:", err.message);
     return res.status(400).json({ error: "Webhook signature verification failed" });
