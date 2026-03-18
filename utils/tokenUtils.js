@@ -16,6 +16,10 @@ function generateRefreshToken() {
   return crypto.randomBytes(40).toString("hex");
 }
 
+function hashToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
 function setRefreshTokenCookie(res, refreshToken) {
   const isProduction = process.env.NODE_ENV === "production";
   res.cookie("refreshToken", refreshToken, {
@@ -40,6 +44,7 @@ function clearRefreshTokenCookie(res) {
 module.exports = {
   generateAccessToken,
   generateRefreshToken,
+  hashToken,
   setRefreshTokenCookie,
   clearRefreshTokenCookie,
 };

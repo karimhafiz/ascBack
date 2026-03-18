@@ -11,6 +11,7 @@ jest.mock("bcryptjs");
 jest.mock("../../utils/tokenUtils", () => ({
   generateAccessToken: jest.fn(() => "mock-access-token"),
   generateRefreshToken: jest.fn(() => "mock-refresh-token"),
+  hashToken: jest.fn((token) => "hashed-" + token),
   setRefreshTokenCookie: jest.fn(),
   clearRefreshTokenCookie: jest.fn(),
 }));
@@ -180,6 +181,7 @@ describe("User Controller", () => {
         email: "test@example.com",
         role: "user",
       };
+      // Controller hashes the token before querying
       User.findOne.mockResolvedValue(mockUser);
 
       const response = await request(app)
@@ -188,6 +190,8 @@ describe("User Controller", () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toHaveProperty("accessToken");
+      // Verify the controller hashed the token before lookup
+      expect(User.findOne).toHaveBeenCalledWith({ refreshToken: "hashed-valid-refresh-token" });
     });
 
     it("should return 401 if no refresh token", async () => {
@@ -218,6 +222,11 @@ describe("User Controller", () => {
 
       expect(response.status).toBe(200);
       expect(response.body.message).toBe("Logged out successfully");
+      // Verify hashed token was used for lookup
+      expect(User.findOneAndUpdate).toHaveBeenCalledWith(
+        { refreshToken: "hashed-some-token" },
+        { refreshToken: null }
+      );
     });
   });
 

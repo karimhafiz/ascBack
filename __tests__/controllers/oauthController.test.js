@@ -9,6 +9,7 @@ const User = require("../../models/User");
 jest.mock("../../utils/tokenUtils", () => ({
   generateAccessToken: jest.fn(() => "mock-access-token"),
   generateRefreshToken: jest.fn(() => "mock-refresh-token"),
+  hashToken: jest.fn((token) => "hashed-" + token),
   setRefreshTokenCookie: jest.fn(),
 }));
 

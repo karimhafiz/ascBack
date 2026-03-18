@@ -9,7 +9,7 @@ exports.getAllCourses = async (req, res) => {
     const courses = await Course.find().sort({ createdAt: -1 });
     res.json(courses);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch courses" });
   }
 };
 
@@ -19,7 +19,7 @@ exports.getCourseById = async (req, res) => {
     if (!course) return res.status(404).json({ message: "Course not found" });
     res.json(course);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch course" });
   }
 };
 
@@ -31,8 +31,29 @@ exports.createCourse = async (req, res) => {
     let imageUrl = null;
     if (req.file) imageUrl = req.file.secure_url || req.file.path;
 
+    const allowedFields = [
+      "title",
+      "description",
+      "shortDescription",
+      "instructor",
+      "category",
+      "price",
+      "schedule",
+      "street",
+      "city",
+      "postCode",
+      "maxEnrollment",
+      "enrollmentOpen",
+      "isSubscription",
+      "featured",
+    ];
+    const sanitized = {};
+    for (const key of allowedFields) {
+      if (data[key] !== undefined) sanitized[key] = data[key];
+    }
+
     const course = new Course({
-      ...data,
+      ...sanitized,
       images: imageUrl ? [imageUrl] : [],
       createdBy: req.user.id,
       featured: data.featured === true || data.featured === "true",
@@ -42,7 +63,7 @@ exports.createCourse = async (req, res) => {
     await course.save();
     res.status(201).json({ message: "Course created successfully", course });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to create course" });
   }
 };
 
@@ -60,10 +81,31 @@ exports.updateCourse = async (req, res) => {
       imagePath = req.file.secure_url || req.file.path;
     }
 
+    const allowedUpdateFields = [
+      "title",
+      "description",
+      "shortDescription",
+      "instructor",
+      "category",
+      "price",
+      "schedule",
+      "street",
+      "city",
+      "postCode",
+      "maxEnrollment",
+      "enrollmentOpen",
+      "isSubscription",
+      "featured",
+    ];
+    const sanitizedUpdate = {};
+    for (const key of allowedUpdateFields) {
+      if (data[key] !== undefined) sanitizedUpdate[key] = data[key];
+    }
+
     const updated = await Course.findByIdAndUpdate(
       req.params.id,
       {
-        ...data,
+        ...sanitizedUpdate,
         featured: data.featured === true || data.featured === "true",
         enrollmentOpen: data.enrollmentOpen !== false && data.enrollmentOpen !== "false",
         images: imagePath ? [imagePath] : course.images,
@@ -72,7 +114,7 @@ exports.updateCourse = async (req, res) => {
     );
     res.json({ message: "Course updated", course: updated });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to update course" });
   }
 };
 
@@ -87,7 +129,7 @@ exports.deleteCourse = async (req, res) => {
     await Course.findByIdAndDelete(req.params.id);
     res.json({ message: "Course deleted" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to delete course" });
   }
 };
 
@@ -120,18 +162,15 @@ exports.enrollInCourse = async (req, res) => {
     });
     if (existing) {
       if (existing.status === "past_due") {
-        return res
-          .status(400)
-          .json({
-            error:
-              "You have a pending payment for this course. Please resolve it before re-enrolling.",
-          });
+        return res.status(400).json({
+          error:
+            "You have a pending payment for this course. Please resolve it before re-enrolling.",
+        });
       }
       return res.status(400).json({ error: "You are already enrolled in this course" });
     }
 
     const count = participants.length;
-    const participantsJson = encodeURIComponent(JSON.stringify(participants));
 
     // Free course — enroll directly
     if (course.price === 0) {
@@ -176,7 +215,7 @@ exports.enrollInCourse = async (req, res) => {
         customer_email: email,
         line_items: [{ price: priceId, quantity: count }],
         mode: "subscription",
-        success_url: `${process.env.BACK_END_URL}courses/${course._id}/enrollment-success?session_id={CHECKOUT_SESSION_ID}&email=${encodeURIComponent(email)}&participants=${participantsJson}`,
+        success_url: `${process.env.BACK_END_URL}courses/${course._id}/enrollment-success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${process.env.FRONT_END_URL}courses/${course._id}`,
         metadata: {
           courseId: course._id.toString(),
@@ -185,6 +224,19 @@ exports.enrollInCourse = async (req, res) => {
           isSubscription: "true",
         },
       });
+
+      // Store participants in a pending enrollment linked to session ID
+      const user = await User.findOne({ email });
+      const pendingEnrollment = new CourseEnrollment({
+        courseId: course._id,
+        user: user?._id ?? null,
+        buyerEmail: email,
+        pendingSessionId: session.id,
+        status: "pending",
+        participants,
+      });
+      await pendingEnrollment.save();
+
       return res.json({ url: session.url });
     }
 
@@ -209,13 +261,26 @@ exports.enrollInCourse = async (req, res) => {
         },
       ],
       mode: "payment",
-      success_url: `${process.env.BACK_END_URL}courses/${course._id}/enrollment-success?session_id={CHECKOUT_SESSION_ID}&email=${encodeURIComponent(email)}&participants=${participantsJson}`,
+      success_url: `${process.env.BACK_END_URL}courses/${course._id}/enrollment-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.FRONT_END_URL}courses/${course._id}`,
       metadata: { courseId: course._id.toString(), email, count: count.toString() },
     });
+
+    // Store participants in a pending enrollment linked to session ID
+    const user = await User.findOne({ email });
+    const pendingEnrollment = new CourseEnrollment({
+      courseId: course._id,
+      user: user?._id ?? null,
+      buyerEmail: email,
+      pendingSessionId: session.id,
+      status: "pending",
+      participants,
+    });
+    await pendingEnrollment.save();
+
     res.json({ url: session.url });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to process enrollment" });
   }
 };
 
@@ -224,7 +289,7 @@ exports.enrollInCourse = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exports.handleEnrollmentSuccess = async (req, res) => {
   const { courseId } = req.params;
-  const { session_id, email } = req.query;
+  const { session_id } = req.query;
   try {
     const session = await stripe.checkout.sessions.retrieve(session_id, {
       expand: ["subscription"],
@@ -235,37 +300,58 @@ exports.handleEnrollmentSuccess = async (req, res) => {
     if (existing)
       return res.redirect(`${process.env.FRONT_END_URL}course-confirmation?courseId=${courseId}`);
 
-    const user = await User.findOne({ email });
-    let participants = [];
+    // Look up the pending enrollment created before Stripe redirect
+    const pendingEnrollment = await CourseEnrollment.findOne({
+      pendingSessionId: session.id,
+      status: "pending",
+    });
 
-    if (req.query.participants)
-      participants = JSON.parse(decodeURIComponent(req.query.participants));
-
+    const email = session.metadata?.email;
+    const participants = pendingEnrollment?.participants || [];
     const count = participants.length || parseInt(session.metadata?.count || "1", 10);
     const isSubscription = session.metadata?.isSubscription === "true";
 
-    const enrollmentData = {
-      courseId,
-      user: user?._id ?? null,
-      buyerEmail: email,
-      paymentId: session.id,
-      status: isSubscription ? "active" : "paid",
-      participants,
-    };
+    if (pendingEnrollment) {
+      // Upgrade pending enrollment to paid/active
+      pendingEnrollment.paymentId = session.id;
+      pendingEnrollment.status = isSubscription ? "active" : "paid";
+      pendingEnrollment.pendingSessionId = undefined;
 
-    // Store subscription details if applicable
-    if (isSubscription && session.subscription) {
-      const sub = session.subscription;
-      enrollmentData.subscriptionId = sub.id;
-      enrollmentData.subscriptionStatus = sub.status;
-      // current_period_end is a Unix timestamp — only set if it's a valid number
-      if (sub.current_period_end && !isNaN(sub.current_period_end)) {
-        enrollmentData.currentPeriodEnd = new Date(sub.current_period_end * 1000);
+      if (isSubscription && session.subscription) {
+        const sub = session.subscription;
+        pendingEnrollment.subscriptionId = sub.id;
+        pendingEnrollment.subscriptionStatus = sub.status;
+        if (sub.current_period_end && !isNaN(sub.current_period_end)) {
+          pendingEnrollment.currentPeriodEnd = new Date(sub.current_period_end * 1000);
+        }
       }
+
+      await pendingEnrollment.save();
+    } else {
+      // Fallback: create enrollment if no pending record found
+      const user = await User.findOne({ email });
+      const enrollmentData = {
+        courseId,
+        user: user?._id ?? null,
+        buyerEmail: email,
+        paymentId: session.id,
+        status: isSubscription ? "active" : "paid",
+        participants,
+      };
+
+      if (isSubscription && session.subscription) {
+        const sub = session.subscription;
+        enrollmentData.subscriptionId = sub.id;
+        enrollmentData.subscriptionStatus = sub.status;
+        if (sub.current_period_end && !isNaN(sub.current_period_end)) {
+          enrollmentData.currentPeriodEnd = new Date(sub.current_period_end * 1000);
+        }
+      }
+
+      const enrollment = new CourseEnrollment(enrollmentData);
+      await enrollment.save();
     }
 
-    const enrollment = new CourseEnrollment(enrollmentData);
-    await enrollment.save();
     await Course.findByIdAndUpdate(courseId, { $inc: { currentEnrollment: count } });
 
     res.redirect(`${process.env.FRONT_END_URL}course-confirmation?courseId=${courseId}`);
@@ -283,7 +369,7 @@ exports.getCourseEnrollments = async (req, res) => {
     );
     res.json(enrollments);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch enrollments" });
   }
 };
 
@@ -325,7 +411,7 @@ exports.cancelSubscription = async (req, res) => {
       currentPeriodEnd: enrollment.currentPeriodEnd,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to cancel subscription" });
   }
 };
 
@@ -393,7 +479,7 @@ exports.removeParticipant = async (req, res) => {
       participants: enrollment.participants,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to remove participant" });
   }
 };
 
@@ -463,6 +549,6 @@ exports.handleWebhook = async (req, res) => {
     res.json({ received: true });
   } catch (err) {
     console.error("Webhook handler error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Webhook processing failed" });
   }
 };

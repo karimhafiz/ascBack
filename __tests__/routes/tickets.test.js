@@ -16,6 +16,9 @@ jest.mock("../../middleware/authMiddleware", () => (req, res, next) => {
   next();
 });
 
+// Mock authorize to pass through (auth is tested separately)
+jest.mock("../../middleware/authorize", () => () => (req, res, next) => next());
+
 const Ticket = require("../../models/Ticket");
 const Event = require("../../models/Event");
 const ticketRoutes = require("../../routes/tickets");

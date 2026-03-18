@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const path = require("path");
+const helmet = require("helmet");
 const connectDB = require("./config/db"); // Import the database connection function
 
 connectDB();
@@ -10,6 +11,8 @@ const cookieParser = require("cookie-parser");
 
 const app = express();
 
+app.use(helmet());
+
 app.use("/courses/webhook", express.raw({ type: "application/json" }));
 
 app.use(express.json());
@@ -18,10 +21,9 @@ app.use(cookieParser());
 // Update this:
 app.use(
   cors({
-    origin: [
-      "https://asc-lac.vercel.app", // your frontend URL
-      "http://localhost:5173", // for local development (optional)
-    ],
+    origin: [process.env.FRONT_END_URL?.replace(/\/$/, ""), "http://localhost:5173"].filter(
+      Boolean
+    ),
     credentials: true,
   })
 );
@@ -38,7 +40,6 @@ const adminRoutes = require("./routes/admin");
 const pageContentRoutes = require("./routes/pageContent");
 const courseRoutes = require("./routes/courses");
 
-
 app.use("/payments", paymentRoutes);
 app.use("/events", eventRoutes);
 app.use("/tickets", ticketRoutes);
@@ -54,7 +55,8 @@ app.get("/", (req, res) => {
 
 app.use((err, req, res, next) => {
   console.error("GLOBAL ERROR:", err.message, err.stack);
-  res.status(500).json({ error: err.message });
+  const message = process.env.NODE_ENV === "production" ? "Internal server error" : err.message;
+  res.status(500).json({ error: message });
 });
 app.listen(process.env.PORT || 5000, () => {
   console.log(`Server is running on port ${process.env.PORT || 5000}`);
