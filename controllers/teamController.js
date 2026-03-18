@@ -10,7 +10,7 @@ exports.getTeam = async (req, res) => {
     if (!team) return res.status(404).json({ error: "Team not found" });
     res.json({ team });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to fetch team" });
   }
 };
 
@@ -54,7 +54,7 @@ exports.signupTeam = async (req, res) => {
     await team.save();
     res.status(201).json({ message: "Team signed up successfully", team });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to sign up team" });
   }
 };
 
@@ -102,7 +102,7 @@ exports.processTeamPayment = async (req, res) => {
     res.json({ url: session.url });
   } catch (error) {
     console.error("Team payment error:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to process team payment" });
   }
 };
 
@@ -170,7 +170,7 @@ exports.getUnpaidTeamsForManager = async (req, res) => {
     });
     res.json({ teams });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to fetch unpaid teams" });
   }
 };
 
@@ -181,6 +181,6 @@ exports.getTeamsForEvent = async (req, res) => {
     const teams = await Team.find({ event: eventId, paid: true });
     res.json(teams);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to fetch teams" });
   }
 };

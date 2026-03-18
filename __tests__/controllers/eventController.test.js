@@ -54,7 +54,7 @@ describe("Event Controller", () => {
       const response = await request(app).get("/api/events");
 
       expect(response.status).toBe(500);
-      expect(response.body.error).toBe("DB error");
+      expect(response.body.error).toBe("Failed to fetch events");
     });
   });
 

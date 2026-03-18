@@ -7,16 +7,21 @@ const courseEnrollmentSchema = new mongoose.Schema(
     buyerEmail: { type: String, required: true },
     buyerName: { type: String },
     paymentId: { type: String },
-    status: { type: String, enum: ["paid", "free", "active", "cancelled", "past_due"], default: "paid" },
-    subscriptionId: { type: String },       // Stripe subscription ID
-    subscriptionStatus: { type: String },   // active / cancelled / past_due
-    currentPeriodEnd: { type: Date },       // when current paid period ends
+    pendingSessionId: { type: String },
+    status: {
+      type: String,
+      enum: ["pending", "paid", "free", "active", "cancelled", "past_due"],
+      default: "paid",
+    },
+    subscriptionId: { type: String }, // Stripe subscription ID
+    subscriptionStatus: { type: String }, // active / cancelled / past_due
+    currentPeriodEnd: { type: Date }, // when current paid period ends
     participants: [
       {
         name: { type: String, required: true },
         age: { type: Number },
         email: { type: String },
-      }
+      },
     ],
   },
   { timestamps: true }

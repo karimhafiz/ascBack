@@ -6,6 +6,12 @@ jest.mock("../../models/Ticket");
 jest.mock("../../models/Event");
 jest.mock("../../models/User");
 
+// Mock auth middleware — pass through for tests
+jest.mock("../../middleware/authMiddleware", () => (req, res, next) => {
+  req.user = { id: "testUser123", role: "user" };
+  next();
+});
+
 // Mock stripe — must happen before requiring the route
 const mockStripe = {
   checkout: {

@@ -3,6 +3,7 @@ const router = express.Router();
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const Ticket = require("../models/Ticket");
 const Event = require("../models/Event");
+const authenticateToken = require("../middleware/authMiddleware");
 
 // ─── POST /payments/create-checkout-session ───────────────────────────────────
 // Called by the frontend when the user clicks "Buy Ticket"
@@ -100,7 +101,7 @@ router.post("/create-checkout-session", async (req, res) => {
 //   5. We redirect the user to the frontend confirmation page.
 // ─────────────────────────────────────────────────────────────────────────────
 router.get("/success", async (req, res) => {
-  const { session_id, eventId } = req.query;
+  const { session_id } = req.query;
 
   if (!session_id) {
     return res.status(400).json({ error: "Missing session_id" });
@@ -119,10 +120,12 @@ router.get("/success", async (req, res) => {
     // create duplicate tickets. This handles page refreshes gracefully.
     const existingTicket = await Ticket.findOne({ paymentId: session.id });
     if (existingTicket) {
-      return res.redirect(`${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}&ticket_id=${existingTicket._id}`);
+      return res.redirect(
+        `${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}&ticket_id=${existingTicket._id}`
+      );
     }
 
-    const { email, quantity } = session.metadata;
+    const { email, quantity, eventId } = session.metadata;
     const qty = parseInt(quantity, 10);
     const amountPaid = session.amount_total / 100; // convert pence back to pounds
 
@@ -155,7 +158,9 @@ router.get("/success", async (req, res) => {
 
     // Redirect to frontend confirmation page with the first ticket (they'll all have same paymentId)
     // Stripe has already emailed the receipt to the customer automatically.
-    res.redirect(`${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}&ticket_id=${ticketIds[0]}`);
+    res.redirect(
+      `${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}&ticket_id=${ticketIds[0]}`
+    );
   } catch (err) {
     console.error("Stripe success handler error:", err);
     res.status(500).json({ error: "Failed to process payment confirmation" });
@@ -167,7 +172,7 @@ router.get("/success", async (req, res) => {
 // The frontend can't read Stripe session data directly, so it asks our
 // backend to fetch it and return the relevant fields.
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/session/:sessionId", async (req, res) => {
+router.get("/session/:sessionId", authenticateToken, async (req, res) => {
   try {
     const session = await stripe.checkout.sessions.retrieve(req.params.sessionId);
     res.json({

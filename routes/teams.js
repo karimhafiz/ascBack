@@ -1,15 +1,16 @@
 const express = require("express");
 const router = express.Router();
 const teamController = require("../controllers/teamController");
+const authenticateToken = require("../middleware/authMiddleware");
 
 // Get a single team by ID
 router.get("/:teamId", teamController.getTeam);
 
 // Sign up a team for an event
-router.post("/event/:eventId/signup", teamController.signupTeam);
+router.post("/event/:eventId/signup", authenticateToken, teamController.signupTeam);
 
 // Process payment for a team
-router.post("/:teamId/pay", teamController.processTeamPayment);
+router.post("/:teamId/pay", authenticateToken, teamController.processTeamPayment);
 
 // Stripe success redirect — marks team as paid
 router.get("/:teamId/payment-success", teamController.handlePaymentSuccess);
@@ -21,6 +22,6 @@ router.get("/:teamId/cancel", teamController.cancelTeamPayment);
 router.get("/event/:eventId/teams", teamController.getTeamsForEvent);
 
 // Get unpaid teams for a manager on a specific event (for resuming registration)
-router.get("/event/:eventId/unpaid", teamController.getUnpaidTeamsForManager);
+router.get("/event/:eventId/unpaid", authenticateToken, teamController.getUnpaidTeamsForManager);
 
 module.exports = router;

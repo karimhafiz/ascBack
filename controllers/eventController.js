@@ -8,7 +8,7 @@ exports.getAllEvents = async (req, res) => {
     const events = await Event.find();
     res.json(events);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to fetch events" });
   }
 };
 
@@ -21,7 +21,7 @@ exports.getEventById = async (req, res) => {
     }
     res.json(event);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to fetch event" });
   }
 };
 
@@ -44,12 +44,38 @@ exports.createEvent = async (req, res) => {
       imageUrl = req.file.path;
     }
 
+    const allowedFields = [
+      "title",
+      "shortDescription",
+      "longDescription",
+      "date",
+      "openingTime",
+      "street",
+      "postCode",
+      "city",
+      "ageRestriction",
+      "accessibilityInfo",
+      "ticketPrice",
+      "ticketsAvailable",
+      "featured",
+      "isReoccurring",
+      "reoccurringFrequency",
+      "reoccurringEndDate",
+      "reoccurringStartDate",
+      "dayOfWeek",
+      "typeOfEvent",
+      "isTournament",
+    ];
+    const sanitized = {};
+    for (const key of allowedFields) {
+      if (eventData[key] !== undefined) sanitized[key] = eventData[key];
+    }
+
     const newEvent = new Event({
-      ...eventData,
+      ...sanitized,
       featured: eventData.featured === true || eventData.featured === "true",
       isReoccurring: eventData.isReoccurring === true || eventData.isReoccurring === "true",
       isTournament: eventData.isTournament === true || eventData.isTournament === "true",
-      ...(eventData.ticketsAvailable !== undefined && { ticketsAvailable: eventData.ticketsAvailable }),
       images: imageUrl ? [imageUrl] : [],
       createdBy: req.user.id,
     });
@@ -57,7 +83,7 @@ exports.createEvent = async (req, res) => {
     await newEvent.save();
     res.status(201).json({ message: "Event created successfully", event: newEvent });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to create event" });
   }
 };
 
@@ -79,14 +105,40 @@ exports.updateEvent = async (req, res) => {
       imagePath = req.file.path;
     }
 
+    const allowedUpdateFields = [
+      "title",
+      "shortDescription",
+      "longDescription",
+      "date",
+      "openingTime",
+      "street",
+      "postCode",
+      "city",
+      "ageRestriction",
+      "accessibilityInfo",
+      "ticketPrice",
+      "ticketsAvailable",
+      "featured",
+      "isReoccurring",
+      "reoccurringFrequency",
+      "reoccurringEndDate",
+      "reoccurringStartDate",
+      "dayOfWeek",
+      "typeOfEvent",
+      "isTournament",
+    ];
+    const sanitizedUpdate = {};
+    for (const key of allowedUpdateFields) {
+      if (eventData[key] !== undefined) sanitizedUpdate[key] = eventData[key];
+    }
+
     const updatedEvent = await Event.findByIdAndUpdate(
       req.params.id,
       {
-        ...eventData,
+        ...sanitizedUpdate,
         featured: eventData.featured === true || eventData.featured === "true",
         isReoccurring: eventData.isReoccurring === true || eventData.isReoccurring === "true",
         isTournament: eventData.isTournament === true || eventData.isTournament === "true",
-        ...(eventData.ticketsAvailable !== undefined && { ticketsAvailable: eventData.ticketsAvailable }),
         images: imagePath ? [imagePath] : event.images,
       },
       { new: true }
@@ -95,7 +147,7 @@ exports.updateEvent = async (req, res) => {
     res.json({ message: "Event updated successfully", event: updatedEvent });
   } catch (error) {
     console.error("Error updating event:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to update event" });
   }
 };
 
@@ -115,6 +167,6 @@ exports.deleteEvent = async (req, res) => {
     res.json({ message: "Event deleted successfully" });
   } catch (error) {
     console.error("Error deleting event:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to delete event" });
   }
 };

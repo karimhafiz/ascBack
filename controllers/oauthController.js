@@ -3,6 +3,7 @@ const User = require("../models/User");
 const {
   generateAccessToken,
   generateRefreshToken,
+  hashToken,
   setRefreshTokenCookie,
 } = require("../utils/tokenUtils");
 
@@ -12,51 +13,53 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 // POST /auth/google
 // body: { tokenId }
 exports.googleLogin = async (req, res) => {
-    const { tokenId } = req.body;
-    if (!tokenId) {
-        return res.status(400).json({ message: "tokenId is required" });
+  const { tokenId } = req.body;
+  if (!tokenId) {
+    return res.status(400).json({ message: "tokenId is required" });
+  }
+
+  try {
+    const ticket = await client.verifyIdToken({
+      idToken: tokenId,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    const { email, name, sub: googleId, picture } = payload;
+
+    if (!email) {
+      return res.status(400).json({ message: "Google token did not contain an email" });
     }
 
-    try {
-        const ticket = await client.verifyIdToken({
-            idToken: tokenId,
-            audience: process.env.GOOGLE_CLIENT_ID,
-        });
-        const payload = ticket.getPayload();
-        const { email, name, sub: googleId, picture } = payload;
-
-        if (!email) {
-            return res.status(400).json({ message: "Google token did not contain an email" });
-        }
-
-        // find or create the user
-        let user = await User.findOne({ email });
-        if (!user) {
-            user = new User({ name: name || email, email, googleId, authProvider: "google" });
-            await user.save();
-        } else if (!user.googleId) {
-            // if existing user did not have googleId, store it
-            user.googleId = googleId;
-            if (user.authProvider === "local" && !user.password) {
-                user.authProvider = "google";
-            }
-            await user.save();
-        }
-
-        const accessToken = generateAccessToken(user);
-        const refreshToken = generateRefreshToken();
-
-        user.refreshToken = refreshToken;
-        await user.save();
-
-        setRefreshTokenCookie(res, refreshToken);
-
-        res.json({
-            accessToken,
-            user: { id: user._id, name: user.name, email: user.email, role: user.role, picture },
-        });
-    } catch (err) {
-        console.error("Google login error", err);
-        res.status(500).json({ message: "Failed to verify Google token" });
+    // find or create the user
+    let user = await User.findOne({ email });
+    if (!user) {
+      user = new User({ name: name || email, email, googleId, authProvider: "google" });
+      await user.save();
+    } else if (!user.googleId) {
+      // if existing user did not have googleId, store it
+      user.googleId = googleId;
+      if (user.authProvider === "local" && !user.password) {
+        user.authProvider = "google";
+      }
+      await user.save();
     }
+
+    if (user.isBanned) return res.status(403).json({ message: "Account suspended." });
+
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken();
+
+    user.refreshToken = hashToken(refreshToken);
+    await user.save();
+
+    setRefreshTokenCookie(res, refreshToken);
+
+    res.json({
+      accessToken,
+      user: { id: user._id, name: user.name, email: user.email, role: user.role, picture },
+    });
+  } catch (err) {
+    console.error("Google login error", err);
+    res.status(500).json({ message: "Failed to verify Google token" });
+  }
 };

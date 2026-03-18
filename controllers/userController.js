@@ -6,6 +6,7 @@ const bcrypt = require("bcryptjs");
 const {
   generateAccessToken,
   generateRefreshToken,
+  hashToken,
   setRefreshTokenCookie,
   clearRefreshTokenCookie,
 } = require("../utils/tokenUtils");
@@ -15,7 +16,10 @@ exports.register = async (req, res) => {
     const { name, email, password } = req.body;
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      if (existingUser.authProvider === "google" || (!existingUser.password && existingUser.googleId)) {
+      if (
+        existingUser.authProvider === "google" ||
+        (!existingUser.password && existingUser.googleId)
+      ) {
         return res.status(400).json({
           message: "This email is linked to a Google account. Please log in with Google.",
           authMethod: "google",
@@ -24,7 +28,13 @@ exports.register = async (req, res) => {
       return res.status(400).json({ message: "Email already in use." });
     }
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ name, email, password: hashedPassword, authProvider: "local", role: "user" });
+    const user = new User({
+      name,
+      email,
+      password: hashedPassword,
+      authProvider: "local",
+      role: "user",
+    });
     await user.save();
     res.status(201).json({ message: "User registered successfully" });
   } catch (err) {
@@ -48,10 +58,12 @@ exports.login = async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
 
+    if (user.isBanned) return res.status(403).json({ message: "Account suspended." });
+
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken();
 
-    user.refreshToken = refreshToken;
+    user.refreshToken = hashToken(refreshToken);
     await user.save();
 
     setRefreshTokenCookie(res, refreshToken);
@@ -72,10 +84,16 @@ exports.refresh = async (req, res) => {
       return res.status(401).json({ message: "No refresh token" });
     }
 
-    const user = await User.findOne({ refreshToken });
+    const hashedToken = hashToken(refreshToken);
+    const user = await User.findOne({ refreshToken: hashedToken });
     if (!user) {
       clearRefreshTokenCookie(res);
       return res.status(403).json({ message: "Invalid refresh token" });
+    }
+
+    if (user.isBanned) {
+      clearRefreshTokenCookie(res);
+      return res.status(403).json({ message: "Account suspended." });
     }
 
     const accessToken = generateAccessToken(user);
@@ -92,7 +110,10 @@ exports.logout = async (req, res) => {
   try {
     const { refreshToken } = req.cookies;
     if (refreshToken) {
-      await User.findOneAndUpdate({ refreshToken }, { refreshToken: null });
+      await User.findOneAndUpdate(
+        { refreshToken: hashToken(refreshToken) },
+        { refreshToken: null }
+      );
     }
     clearRefreshTokenCookie(res);
     res.json({ message: "Logged out successfully" });
@@ -102,7 +123,6 @@ exports.logout = async (req, res) => {
 };
 
 exports.getProfile = async (req, res) => {
-
   try {
     const user = await User.findById(req.user.id).select("-password -refreshToken");
     if (!user) return res.status(404).json({ message: "User not found" });
