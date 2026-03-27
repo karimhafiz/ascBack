@@ -25,4 +25,18 @@ router.put(
   pageContentController.updatePageContent
 );
 
+// Admin/mod only — reset a full page or a specific section back to defaults
+router.delete(
+  "/:page",
+  authMiddleware,
+  authorize("admin", "moderator"),
+  pageContentController.resetPageContent
+);
+router.delete(
+  "/:page/:section",
+  authMiddleware,
+  authorize("admin", "moderator"),
+  pageContentController.resetPageContent
+);
+
 module.exports = router;
