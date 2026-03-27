@@ -96,23 +96,9 @@ describe("Ticket Routes — Integration", () => {
 
   describe("GET /api/tickets", () => {
     it("should return aggregated ticket data", async () => {
-      const mockTickets = [
-        {
-          status: "paid",
-          eventId: { _id: "e1", title: "Football", ticketPrice: 10 },
-        },
-        {
-          status: "paid",
-          eventId: { _id: "e1", title: "Football", ticketPrice: 10 },
-        },
-        {
-          status: "failed",
-          eventId: { _id: "e1", title: "Football", ticketPrice: 10 },
-        },
-      ];
-      Ticket.find.mockReturnValue({
-        populate: jest.fn().mockResolvedValue(mockTickets),
-      });
+      Ticket.aggregate.mockResolvedValue([
+        { title: "Football", ticketsSold: 2, ticketsCanceled: 1, totalRevenue: 20 },
+      ]);
 
       const res = await request(app).get("/api/tickets");
 
@@ -124,16 +110,11 @@ describe("Ticket Routes — Integration", () => {
     });
 
     it("should skip tickets with no event populated", async () => {
-      const mockTickets = [
-        { status: "paid", eventId: null },
-        {
-          status: "paid",
-          eventId: { _id: "e1", title: "Football", ticketPrice: 5 },
-        },
-      ];
-      Ticket.find.mockReturnValue({
-        populate: jest.fn().mockResolvedValue(mockTickets),
-      });
+      // The aggregation pipeline uses $unwind which drops tickets with no
+      // matching event, so orphaned tickets never appear in results.
+      Ticket.aggregate.mockResolvedValue([
+        { title: "Football", ticketsSold: 1, ticketsCanceled: 0, totalRevenue: 5 },
+      ]);
 
       const res = await request(app).get("/api/tickets");
 
@@ -143,9 +124,7 @@ describe("Ticket Routes — Integration", () => {
     });
 
     it("should return empty array when no tickets", async () => {
-      Ticket.find.mockReturnValue({
-        populate: jest.fn().mockResolvedValue([]),
-      });
+      Ticket.aggregate.mockResolvedValue([]);
 
       const res = await request(app).get("/api/tickets");
 
