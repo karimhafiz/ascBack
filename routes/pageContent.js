@@ -3,7 +3,8 @@ const router = express.Router();
 const pageContentController = require("../controllers/pageContentController");
 const authMiddleware = require("../middleware/authMiddleware");
 const authorize = require("../middleware/authorize");
-const upload = require("../config/multer");
+const { createUpload } = require("../config/multer");
+const upload = createUpload("page-images");
 
 // Public — frontend fetches this to populate pages
 router.get("/:page", pageContentController.getPageContent);

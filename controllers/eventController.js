@@ -1,6 +1,36 @@
 const Event = require("../models/Event");
-const cloudinary = require("../config/cloudinary");
 const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
+
+const ALLOWED_FIELDS = [
+  "title",
+  "shortDescription",
+  "longDescription",
+  "date",
+  "openingTime",
+  "street",
+  "postCode",
+  "city",
+  "ageRestriction",
+  "accessibilityInfo",
+  "ticketPrice",
+  "ticketsAvailable",
+  "featured",
+  "isReoccurring",
+  "reoccurringFrequency",
+  "reoccurringEndDate",
+  "reoccurringStartDate",
+  "dayOfWeek",
+  "typeOfEvent",
+  "isTournament",
+];
+
+function sanitize(data) {
+  const out = {};
+  for (const key of ALLOWED_FIELDS) {
+    if (data[key] !== undefined) out[key] = data[key];
+  }
+  return out;
+}
 
 // Get all events
 exports.getAllEvents = async (req, res) => {
@@ -8,6 +38,7 @@ exports.getAllEvents = async (req, res) => {
     const events = await Event.find();
     res.json(events);
   } catch (error) {
+    console.error("Error fetching events:", error);
     res.status(500).json({ error: "Failed to fetch events" });
   }
 };
@@ -21,6 +52,7 @@ exports.getEventById = async (req, res) => {
     }
     res.json(event);
   } catch (error) {
+    console.error("Error fetching event:", error);
     res.status(500).json({ error: "Failed to fetch event" });
   }
 };
@@ -35,41 +67,12 @@ exports.createEvent = async (req, res) => {
     let eventData;
     try {
       eventData = JSON.parse(req.body.eventData);
-    } catch (e) {
+    } catch {
       return res.status(400).json({ error: "Invalid JSON in eventData" });
     }
 
-    let imageUrl = null;
-    if (req.file) {
-      imageUrl = req.file.path;
-    }
-
-    const allowedFields = [
-      "title",
-      "shortDescription",
-      "longDescription",
-      "date",
-      "openingTime",
-      "street",
-      "postCode",
-      "city",
-      "ageRestriction",
-      "accessibilityInfo",
-      "ticketPrice",
-      "ticketsAvailable",
-      "featured",
-      "isReoccurring",
-      "reoccurringFrequency",
-      "reoccurringEndDate",
-      "reoccurringStartDate",
-      "dayOfWeek",
-      "typeOfEvent",
-      "isTournament",
-    ];
-    const sanitized = {};
-    for (const key of allowedFields) {
-      if (eventData[key] !== undefined) sanitized[key] = eventData[key];
-    }
+    const imageUrl = req.file ? req.file.path : null;
+    const sanitized = sanitize(eventData);
 
     const newEvent = new Event({
       ...sanitized,
@@ -83,6 +86,7 @@ exports.createEvent = async (req, res) => {
     await newEvent.save();
     res.status(201).json({ message: "Event created successfully", event: newEvent });
   } catch (error) {
+    console.error("Error creating event:", error);
     res.status(500).json({ error: "Failed to create event" });
   }
 };
@@ -105,37 +109,12 @@ exports.updateEvent = async (req, res) => {
       imagePath = req.file.path;
     }
 
-    const allowedUpdateFields = [
-      "title",
-      "shortDescription",
-      "longDescription",
-      "date",
-      "openingTime",
-      "street",
-      "postCode",
-      "city",
-      "ageRestriction",
-      "accessibilityInfo",
-      "ticketPrice",
-      "ticketsAvailable",
-      "featured",
-      "isReoccurring",
-      "reoccurringFrequency",
-      "reoccurringEndDate",
-      "reoccurringStartDate",
-      "dayOfWeek",
-      "typeOfEvent",
-      "isTournament",
-    ];
-    const sanitizedUpdate = {};
-    for (const key of allowedUpdateFields) {
-      if (eventData[key] !== undefined) sanitizedUpdate[key] = eventData[key];
-    }
+    const sanitized = sanitize(eventData);
 
     const updatedEvent = await Event.findByIdAndUpdate(
       req.params.id,
       {
-        ...sanitizedUpdate,
+        ...sanitized,
         featured: eventData.featured === true || eventData.featured === "true",
         isReoccurring: eventData.isReoccurring === true || eventData.isReoccurring === "true",
         isTournament: eventData.isTournament === true || eventData.isTournament === "true",

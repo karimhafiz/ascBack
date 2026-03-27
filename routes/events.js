@@ -3,7 +3,8 @@ const router = express.Router();
 const eventController = require("../controllers/eventController");
 const authMiddleware = require("../middleware/authMiddleware");
 const authorize = require("../middleware/authorize");
-const upload = require("../config/multer");
+const { createUpload } = require("../config/multer");
+const upload = createUpload("event-images");
 
 // Event routes
 // Fetch all events

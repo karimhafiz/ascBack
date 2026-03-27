@@ -4,11 +4,37 @@ const User = require("../models/User");
 const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
+const ALLOWED_FIELDS = [
+  "title",
+  "description",
+  "shortDescription",
+  "instructor",
+  "category",
+  "price",
+  "schedule",
+  "street",
+  "city",
+  "postCode",
+  "maxEnrollment",
+  "enrollmentOpen",
+  "isSubscription",
+  "featured",
+];
+
+function sanitize(data) {
+  const out = {};
+  for (const key of ALLOWED_FIELDS) {
+    if (data[key] !== undefined) out[key] = data[key];
+  }
+  return out;
+}
+
 exports.getAllCourses = async (req, res) => {
   try {
     const courses = await Course.find().sort({ createdAt: -1 });
     res.json(courses);
   } catch (err) {
+    console.error("Error fetching courses:", err);
     res.status(500).json({ error: "Failed to fetch courses" });
   }
 };
@@ -19,6 +45,7 @@ exports.getCourseById = async (req, res) => {
     if (!course) return res.status(404).json({ message: "Course not found" });
     res.json(course);
   } catch (err) {
+    console.error("Error fetching course:", err);
     res.status(500).json({ error: "Failed to fetch course" });
   }
 };
@@ -28,29 +55,8 @@ exports.createCourse = async (req, res) => {
     if (!req.body.courseData) return res.status(400).json({ error: "courseData is required" });
     const data = JSON.parse(req.body.courseData);
 
-    let imageUrl = null;
-    if (req.file) imageUrl = req.file.secure_url || req.file.path;
-
-    const allowedFields = [
-      "title",
-      "description",
-      "shortDescription",
-      "instructor",
-      "category",
-      "price",
-      "schedule",
-      "street",
-      "city",
-      "postCode",
-      "maxEnrollment",
-      "enrollmentOpen",
-      "isSubscription",
-      "featured",
-    ];
-    const sanitized = {};
-    for (const key of allowedFields) {
-      if (data[key] !== undefined) sanitized[key] = data[key];
-    }
+    const imageUrl = req.file ? req.file.secure_url || req.file.path : null;
+    const sanitized = sanitize(data);
 
     const course = new Course({
       ...sanitized,
@@ -63,6 +69,7 @@ exports.createCourse = async (req, res) => {
     await course.save();
     res.status(201).json({ message: "Course created successfully", course });
   } catch (err) {
+    console.error("Error creating course:", err);
     res.status(500).json({ error: "Failed to create course" });
   }
 };
@@ -81,31 +88,12 @@ exports.updateCourse = async (req, res) => {
       imagePath = req.file.secure_url || req.file.path;
     }
 
-    const allowedUpdateFields = [
-      "title",
-      "description",
-      "shortDescription",
-      "instructor",
-      "category",
-      "price",
-      "schedule",
-      "street",
-      "city",
-      "postCode",
-      "maxEnrollment",
-      "enrollmentOpen",
-      "isSubscription",
-      "featured",
-    ];
-    const sanitizedUpdate = {};
-    for (const key of allowedUpdateFields) {
-      if (data[key] !== undefined) sanitizedUpdate[key] = data[key];
-    }
+    const sanitized = sanitize(data);
 
     const updated = await Course.findByIdAndUpdate(
       req.params.id,
       {
-        ...sanitizedUpdate,
+        ...sanitized,
         featured: data.featured === true || data.featured === "true",
         enrollmentOpen: data.enrollmentOpen !== false && data.enrollmentOpen !== "false",
         images: imagePath ? [imagePath] : course.images,
@@ -114,6 +102,7 @@ exports.updateCourse = async (req, res) => {
     );
     res.json({ message: "Course updated", course: updated });
   } catch (err) {
+    console.error("Error updating course:", err);
     res.status(500).json({ error: "Failed to update course" });
   }
 };
@@ -129,6 +118,7 @@ exports.deleteCourse = async (req, res) => {
     await Course.findByIdAndDelete(req.params.id);
     res.json({ message: "Course deleted" });
   } catch (err) {
+    console.error("Error deleting course:", err);
     res.status(500).json({ error: "Failed to delete course" });
   }
 };
@@ -189,10 +179,8 @@ exports.enrollInCourse = async (req, res) => {
 
     // ── Subscription flow ──────────────────────────────────────────────────
     if (course.isSubscription) {
-      // Ensure a Stripe Price exists for this course
       let priceId = course.stripePriceId;
       if (!priceId) {
-        // Create product + recurring price on the fly if not yet set up
         const product = await stripe.products.create({
           name: course.title,
           description: course.shortDescription || course.instructor || "",
@@ -225,7 +213,6 @@ exports.enrollInCourse = async (req, res) => {
         },
       });
 
-      // Store participants in a pending enrollment linked to session ID
       const user = await User.findOne({ email });
       const pendingEnrollment = new CourseEnrollment({
         courseId: course._id,
@@ -266,7 +253,6 @@ exports.enrollInCourse = async (req, res) => {
       metadata: { courseId: course._id.toString(), email, count: count.toString() },
     });
 
-    // Store participants in a pending enrollment linked to session ID
     const user = await User.findOne({ email });
     const pendingEnrollment = new CourseEnrollment({
       courseId: course._id,
@@ -280,6 +266,7 @@ exports.enrollInCourse = async (req, res) => {
 
     res.json({ url: session.url });
   } catch (err) {
+    console.error("Error processing enrollment:", err);
     res.status(500).json({ error: "Failed to process enrollment" });
   }
 };
@@ -300,7 +287,6 @@ exports.handleEnrollmentSuccess = async (req, res) => {
     if (existing)
       return res.redirect(`${process.env.FRONT_END_URL}course-confirmation?courseId=${courseId}`);
 
-    // Look up the pending enrollment created before Stripe redirect
     const pendingEnrollment = await CourseEnrollment.findOne({
       pendingSessionId: session.id,
       status: "pending",
@@ -312,7 +298,6 @@ exports.handleEnrollmentSuccess = async (req, res) => {
     const isSubscription = session.metadata?.isSubscription === "true";
 
     if (pendingEnrollment) {
-      // Upgrade pending enrollment to paid/active
       pendingEnrollment.paymentId = session.id;
       pendingEnrollment.status = isSubscription ? "active" : "paid";
       pendingEnrollment.pendingSessionId = undefined;
@@ -369,6 +354,7 @@ exports.getCourseEnrollments = async (req, res) => {
     );
     res.json(enrollments);
   } catch (err) {
+    console.error("Error fetching enrollments:", err);
     res.status(500).json({ error: "Failed to fetch enrollments" });
   }
 };
@@ -383,7 +369,6 @@ exports.cancelSubscription = async (req, res) => {
     const enrollment = await CourseEnrollment.findById(enrollmentId);
     if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
 
-    // Only the buyer or admin can cancel
     if (enrollment.buyerEmail !== req.user.email && req.user.role !== "admin") {
       return res.status(403).json({ error: "Not authorised" });
     }
@@ -396,7 +381,6 @@ exports.cancelSubscription = async (req, res) => {
       return res.status(400).json({ error: "Subscription is already cancelled" });
     }
 
-    // Cancel at period end — user keeps access until currentPeriodEnd
     await stripe.subscriptions.update(enrollment.subscriptionId, {
       cancel_at_period_end: true,
     });
@@ -411,6 +395,7 @@ exports.cancelSubscription = async (req, res) => {
       currentPeriodEnd: enrollment.currentPeriodEnd,
     });
   } catch (err) {
+    console.error("Error cancelling subscription:", err);
     res.status(500).json({ error: "Failed to cancel subscription" });
   }
 };
@@ -427,7 +412,6 @@ exports.removeParticipant = async (req, res) => {
     const enrollment = await CourseEnrollment.findById(enrollmentId);
     if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
 
-    // Only the buyer or admin can remove participants
     if (enrollment.buyerEmail !== req.user.email && req.user.role !== "admin") {
       return res.status(403).json({ error: "Not authorised" });
     }
@@ -448,7 +432,6 @@ exports.removeParticipant = async (req, res) => {
 
     const removed = enrollment.participants[participantIndex];
 
-    // Update Stripe subscription quantity first — only proceed if this succeeds
     if (enrollment.subscriptionId && enrollment.subscriptionStatus !== "cancelled") {
       try {
         const subscription = await stripe.subscriptions.retrieve(enrollment.subscriptionId);
@@ -459,17 +442,16 @@ exports.removeParticipant = async (req, res) => {
           });
         }
       } catch (stripeErr) {
+        console.error("Stripe subscription update error:", stripeErr);
         return res.status(502).json({
           error: "Failed to update subscription billing. Please try again.",
         });
       }
     }
 
-    // Stripe succeeded (or not applicable) — now remove from DB
     enrollment.participants.splice(participantIndex, 1);
     await enrollment.save();
 
-    // Decrement course enrollment count
     await Course.findByIdAndUpdate(enrollment.courseId, {
       $inc: { currentEnrollment: -1 },
     });
@@ -479,6 +461,7 @@ exports.removeParticipant = async (req, res) => {
       participants: enrollment.participants,
     });
   } catch (err) {
+    console.error("Error removing participant:", err);
     res.status(500).json({ error: "Failed to remove participant" });
   }
 };
@@ -501,7 +484,6 @@ exports.handleWebhook = async (req, res) => {
 
   try {
     switch (event.type) {
-      // Subscription renewed successfully — update period end date
       case "invoice.payment_succeeded": {
         const invoice = event.data.object;
         if (invoice.subscription) {
@@ -517,7 +499,6 @@ exports.handleWebhook = async (req, res) => {
         }
         break;
       }
-      // Payment failed — mark as past_due
       case "invoice.payment_failed": {
         const invoice = event.data.object;
         if (invoice.subscription) {
@@ -528,7 +509,6 @@ exports.handleWebhook = async (req, res) => {
         }
         break;
       }
-      // Subscription fully ended (period end reached after cancel_at_period_end)
       case "customer.subscription.deleted": {
         const sub = event.data.object;
         const enrollment = await CourseEnrollment.findOneAndUpdate(
@@ -536,7 +516,6 @@ exports.handleWebhook = async (req, res) => {
           { subscriptionStatus: "cancelled", status: "cancelled" },
           { new: false }
         );
-        // Decrement course enrollment count by actual participant count
         if (enrollment) {
           const count = enrollment.participants?.length || 1;
           await Course.findByIdAndUpdate(enrollment.courseId, {

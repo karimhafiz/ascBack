@@ -21,12 +21,28 @@ const courseSchema = new mongoose.Schema(
     currentEnrollment: { type: Number, default: 0 },
     enrollmentOpen: { type: Boolean, default: true },
     isSubscription: { type: Boolean, default: false },
-    stripeProductId: { type: String }, // Stripe Product ID for subscription pricing
-    stripePriceId: { type: String },   // Stripe recurring Price ID
+    // Both fields are set together when a Stripe subscription product is created.
+    // Either both are set or neither; one without the other is invalid state.
+    stripeProductId: { type: String, default: null },
+    stripePriceId: { type: String, default: null },
     featured: { type: Boolean, default: false },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    validate: {
+      validator: function () {
+        const hasProduct = !!this.stripeProductId;
+        const hasPrice = !!this.stripePriceId;
+        return hasProduct === hasPrice;
+      },
+      message: "stripeProductId and stripePriceId must both be set or both be null",
+    },
+  }
 );
+
+// Indexes for common query patterns
+courseSchema.index({ featured: 1 });
+courseSchema.index({ category: 1 });
 
 module.exports = mongoose.model("Course", courseSchema);

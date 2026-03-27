@@ -1,13 +1,5 @@
 const mongoose = require("mongoose");
-
-function generateTicketCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous I/O/0/1
-  let code = "TKT-";
-  for (let i = 0; i < 6; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return code;
-}
+const { generateUniqueTicketCode } = require("../utils/ticketUtils");
 
 const ticketSchema = new mongoose.Schema(
   {
@@ -23,22 +15,21 @@ const ticketSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Auto-generate ticketCode before saving if not already set
+// Indexes for lookup patterns used in routes
+ticketSchema.index({ paymentId: 1 });
+ticketSchema.index({ eventId: 1 });
+ticketSchema.index({ buyerEmail: 1 });
+
+// Assign a unique ticket code before saving if one hasn't been set yet.
+// Delegates to ticketUtils so the generation logic is testable in isolation.
 ticketSchema.pre("save", async function (next) {
   if (this.ticketCode) return next();
-  const maxAttempts = 10;
-  let code, exists;
-  let attempts = 0;
-  do {
-    if (attempts >= maxAttempts) {
-      return next(new Error("Failed to generate unique ticket code"));
-    }
-    code = generateTicketCode();
-    exists = await mongoose.model("Ticket").findOne({ ticketCode: code });
-    attempts++;
-  } while (exists);
-  this.ticketCode = code;
-  next();
+  try {
+    this.ticketCode = await generateUniqueTicketCode(mongoose.model("Ticket"));
+    next();
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = mongoose.model("Ticket", ticketSchema);
