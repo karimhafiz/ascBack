@@ -3,14 +3,6 @@ const cloudinary = require("cloudinary");
 const multerStorageCloudinary = require("multer-storage-cloudinary");
 const CloudinaryStorage = multerStorageCloudinary.CloudinaryStorage || multerStorageCloudinary;
 
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: "event-images",
-    allowed_formats: ["jpg", "png", "jpeg", "webp"],
-  },
-});
-
 const fileFilter = (req, file, cb) => {
   const allowed = ["image/jpeg", "image/png", "image/webp"];
   if (allowed.includes(file.mimetype)) {
@@ -20,10 +12,23 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter,
-});
+/**
+ * Creates a multer upload instance that stores files in the given Cloudinary folder.
+ * Each route that handles uploads should call this with its own folder name so
+ * images are organised correctly in Cloudinary and can be deleted by folder later.
+ *
+ * @param {string} folder - Cloudinary folder name (e.g. "event-images")
+ * @returns {import('multer').Multer}
+ */
+function createUpload(folder) {
+  const storage = new CloudinaryStorage({
+    cloudinary,
+    params: {
+      folder,
+      allowed_formats: ["jpg", "png", "jpeg", "webp"],
+    },
+  });
+  return multer({ storage, limits: { fileSize: 5 * 1024 * 1024 }, fileFilter });
+}
 
-module.exports = upload;
+module.exports = { createUpload };

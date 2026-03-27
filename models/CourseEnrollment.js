@@ -13,9 +13,13 @@ const courseEnrollmentSchema = new mongoose.Schema(
       enum: ["pending", "paid", "free", "active", "cancelled", "past_due"],
       default: "paid",
     },
-    subscriptionId: { type: String }, // Stripe subscription ID
-    subscriptionStatus: { type: String }, // active / cancelled / past_due
-    currentPeriodEnd: { type: Date }, // when current paid period ends
+    subscriptionId: { type: String },
+    subscriptionStatus: {
+      type: String,
+      enum: ["active", "cancelled", "past_due", null],
+      default: null,
+    },
+    currentPeriodEnd: { type: Date },
     participants: [
       {
         name: { type: String, required: true },
@@ -25,6 +29,16 @@ const courseEnrollmentSchema = new mongoose.Schema(
     ],
   },
   { timestamps: true }
+);
+
+// Prevent duplicate active enrollments for the same email + course at the DB level.
+// The partial filter means the constraint only applies to non-cancelled/non-pending records.
+courseEnrollmentSchema.index(
+  { courseId: 1, buyerEmail: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { status: { $in: ["paid", "free", "active", "past_due"] } },
+  }
 );
 
 module.exports = mongoose.model("CourseEnrollment", courseEnrollmentSchema);
