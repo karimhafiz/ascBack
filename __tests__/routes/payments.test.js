@@ -8,7 +8,7 @@ jest.mock("../../models/User");
 
 // Mock auth middleware — pass through for tests
 jest.mock("../../middleware/authMiddleware", () => (req, res, next) => {
-  req.user = { id: "testUser123", role: "user" };
+  req.user = { id: "testUser123", role: "user", email: "buyer@test.com" };
   next();
 });
 
@@ -94,7 +94,7 @@ describe("Payment Routes — Integration", () => {
         .send({ eventId: "event1" });
 
       expect(res.status).toBe(400);
-      expect(res.body.error).toBe("eventId, email, and quantity are required");
+      expect(res.body.error).toBe("eventId and quantity are required");
     });
 
     it("should return 404 if event not found", async () => {
@@ -149,7 +149,7 @@ describe("Payment Routes — Integration", () => {
       mockStripe.checkout.sessions.retrieve.mockResolvedValue({
         id: "cs_test_123",
         payment_status: "paid",
-        metadata: { email: "buyer@test.com", quantity: "2" },
+        metadata: { email: "buyer@test.com", quantity: "2", eventId: "event1" },
         amount_total: 2000, // 20 GBP in pence
       });
 
@@ -193,10 +193,15 @@ describe("Payment Routes — Integration", () => {
       expect(createdTickets[0].status).toBe("paid");
       expect(createdTickets[0].user).toBe("user1");
 
-      // Should update event revenue and ticket count
-      expect(mockEvent.ticketsAvailable).toBe(48); // 50 - 2
-      expect(mockEvent.totalRevenue).toBe(120); // 100 + 20
-      expect(mockEvent.save).toHaveBeenCalled();
+      // Should update event revenue and ticket count atomically
+      expect(Event.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: "event1" },
+        { $inc: { totalRevenue: 20 } }
+      );
+      expect(Event.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: "event1", ticketsAvailable: { $gte: 2 } },
+        { $inc: { ticketsAvailable: -2 } }
+      );
     });
 
     it("should be idempotent — redirect without creating duplicates on refresh", async () => {

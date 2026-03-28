@@ -32,6 +32,11 @@ describe("Team Controller", () => {
     jest.clearAllMocks();
     app = express();
     app.use(express.json());
+    // Inject authenticated user for all routes
+    app.use((req, res, next) => {
+      req.user = { id: "user123", email: "m@test.com", role: "user" };
+      next();
+    });
 
     app.get("/api/teams/:teamId", teamController.getTeam);
     app.post("/api/teams/event/:eventId/signup", teamController.signupTeam);
@@ -61,6 +66,7 @@ describe("Team Controller", () => {
 
   describe("POST /event/:eventId/signup", () => {
     it("should create a new team", async () => {
+      Event.findById.mockResolvedValue({ _id: "event1", isTournament: true });
       Team.findOne.mockResolvedValue(null);
       Team.mockImplementation(function (data) {
         Object.assign(this, data);
@@ -75,11 +81,13 @@ describe("Team Controller", () => {
           manager: { name: "Manager", email: "m@test.com" },
         });
 
+      expect(Event.findById).toHaveBeenCalledWith("event1");
       expect(res.status).toBe(201);
       expect(res.body.message).toBe("Team signed up successfully");
     });
 
     it("should update existing unpaid team", async () => {
+      Event.findById.mockResolvedValue({ _id: "event1", isTournament: true });
       const existingTeam = {
         _id: "t1",
         name: "Old Name",
@@ -97,6 +105,7 @@ describe("Team Controller", () => {
           manager: { name: "Manager", email: "m@test.com" },
         });
 
+      expect(Event.findById).toHaveBeenCalledWith("event1");
       expect(res.status).toBe(200);
       expect(res.body.message).toBe("Existing team updated");
       expect(existingTeam.name).toBe("New Name");
@@ -162,17 +171,20 @@ describe("Team Controller", () => {
     it("should return unpaid teams for manager", async () => {
       Team.find.mockResolvedValue([{ _id: "t1", name: "Team A" }]);
 
-      const res = await request(app)
-        .get("/api/teams/event/event1/unpaid")
-        .query({ email: "m@test.com" });
+      // Email is sourced from req.user (set by auth middleware), not query params
+      const res = await request(app).get("/api/teams/event/event1/unpaid");
 
       expect(res.status).toBe(200);
       expect(res.body.teams).toHaveLength(1);
     });
 
-    it("should return 400 if email missing", async () => {
+    it("should return empty array when no unpaid teams found", async () => {
+      Team.find.mockResolvedValue([]);
+
       const res = await request(app).get("/api/teams/event/event1/unpaid");
-      expect(res.status).toBe(400);
+
+      expect(res.status).toBe(200);
+      expect(res.body.teams).toHaveLength(0);
     });
   });
 
