@@ -94,7 +94,12 @@ exports.createEvent = async (req, res) => {
 // Update an event
 exports.updateEvent = async (req, res) => {
   try {
-    const eventData = JSON.parse(req.body.eventData);
+    let eventData;
+    try {
+      eventData = JSON.parse(req.body.eventData);
+    } catch {
+      return res.status(400).json({ error: "Invalid JSON in eventData" });
+    }
 
     const event = await Event.findById(req.params.id);
     if (!event) {

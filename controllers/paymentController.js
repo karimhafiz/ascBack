@@ -96,12 +96,12 @@ exports.handleSuccess = async (req, res) => {
       ticketIds.push(ticket._id);
     }
 
-    const event = await Event.findById(eventId);
-    if (event) {
-      event.ticketsAvailable = Math.max(0, event.ticketsAvailable - qty);
-      event.totalRevenue += amountPaid;
-      await event.save();
-    }
+    // Atomic decrement — collapses check + update into one operation to prevent overselling
+    await Event.findOneAndUpdate({ _id: eventId }, { $inc: { totalRevenue: amountPaid } });
+    await Event.findOneAndUpdate(
+      { _id: eventId, ticketsAvailable: { $gte: qty } },
+      { $inc: { ticketsAvailable: -qty } }
+    );
 
     res.redirect(
       `${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}&ticket_id=${ticketIds[0]}`

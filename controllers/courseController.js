@@ -76,7 +76,12 @@ exports.createCourse = async (req, res) => {
 
 exports.updateCourse = async (req, res) => {
   try {
-    const data = JSON.parse(req.body.courseData);
+    let data;
+    try {
+      data = JSON.parse(req.body.courseData);
+    } catch {
+      return res.status(400).json({ error: "Invalid JSON in courseData" });
+    }
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ message: "Course not found" });
 
