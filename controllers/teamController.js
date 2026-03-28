@@ -26,6 +26,12 @@ exports.signupTeam = async (req, res) => {
       return res.status(400).json({ error: "Team name and members are required" });
     }
 
+    const event = await Event.findById(eventId);
+    if (!event) return res.status(404).json({ error: "Event not found" });
+    if (!event.isTournament) {
+      return res.status(400).json({ error: "This event does not accept team registrations" });
+    }
+
     // Check for an existing unpaid team from this manager for this event
     const existing = await Team.findOne({
       event: eventId,
@@ -160,8 +166,7 @@ exports.cancelTeamPayment = async (req, res) => {
 exports.getUnpaidTeamsForManager = async (req, res) => {
   try {
     const { eventId } = req.params;
-    const { email } = req.query;
-    if (!email) return res.status(400).json({ error: "email query param required" });
+    const email = req.user.email;
 
     const teams = await Team.find({
       event: eventId,

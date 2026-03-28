@@ -128,7 +128,8 @@ exports.deleteCourse = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exports.enrollInCourse = async (req, res) => {
   try {
-    const { email, participants = [] } = req.body;
+    const { participants = [] } = req.body;
+    const email = req.user.email;
     if (!participants.length) {
       return res.status(400).json({ error: "At least one participant is required" });
     }
@@ -369,7 +370,9 @@ exports.cancelSubscription = async (req, res) => {
     const enrollment = await CourseEnrollment.findById(enrollmentId);
     if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
 
-    if (enrollment.buyerEmail !== req.user.email && req.user.role !== "admin") {
+    const ownerId = enrollment.user?.toString();
+    const isOwner = ownerId ? ownerId === req.user.id : enrollment.buyerEmail === req.user.email;
+    if (!isOwner && req.user.role !== "admin") {
       return res.status(403).json({ error: "Not authorised" });
     }
 
@@ -412,7 +415,11 @@ exports.removeParticipant = async (req, res) => {
     const enrollment = await CourseEnrollment.findById(enrollmentId);
     if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
 
-    if (enrollment.buyerEmail !== req.user.email && req.user.role !== "admin") {
+    const participantOwnerId = enrollment.user?.toString();
+    const isParticipantOwner = participantOwnerId
+      ? participantOwnerId === req.user.id
+      : enrollment.buyerEmail === req.user.email;
+    if (!isParticipantOwner && req.user.role !== "admin") {
       return res.status(403).json({ error: "Not authorised" });
     }
 

@@ -1,9 +1,9 @@
-const User   = require("../models/User");
+const User = require("../models/User");
 const Ticket = require("../models/Ticket");
 const CourseEnrollment = require("../models/CourseEnrollment");
 const Course = require("../models/Course");
-const Team   = require("../models/Team");
-const Event  = require("../models/Event");
+const Team = require("../models/Team");
+const Event = require("../models/Event");
 
 // ── GET /admin/dashboard ──────────────────────────────────────────────────────
 // Accessible by admin and moderator.
@@ -21,21 +21,24 @@ exports.getDashboard = async (req, res) => {
     const events = await Event.find({}, "title ticketPrice totalRevenue ticketsAvailable");
 
     // All team registrations with event info
-    const teams = await Team.find()
-      .populate("event", "title date")
-      .sort({ createdAt: -1 });
+    const teams = await Team.find().populate("event", "title date").sort({ createdAt: -1 });
 
     const enrollments = await CourseEnrollment.find()
       .populate("courseId", "title instructor category price")
       .sort({ createdAt: -1 });
 
-    const courses = await Course.find({}, "title instructor category price currentEnrollment maxEnrollment enrollmentOpen");
+    const courses = await Course.find(
+      {},
+      "title instructor category price currentEnrollment maxEnrollment enrollmentOpen"
+    );
 
     const payload = { tickets, events, teams, enrollments, courses };
 
     // User list — admins only
     if (req.user.role === "admin") {
-      const users = await User.find({}, "name email role createdAt isActive isBanned").sort({ createdAt: -1 });
+      const users = await User.find({}, "name email role createdAt isActive isBanned").sort({
+        createdAt: -1,
+      });
       payload.users = users;
     }
 
@@ -52,7 +55,7 @@ exports.getDashboard = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exports.getAllUsers = async (req, res) => {
   try {
-    const users = await User.find().select("-password").sort({ createdAt: -1 });
+    const users = await User.find().select("-password -refreshToken").sort({ createdAt: -1 });
     res.json(users);
   } catch (err) {
     res.status(500).json({ message: err.message });
