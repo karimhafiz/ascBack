@@ -16,11 +16,13 @@ exports.buyTicket = async (req, res) => {
       return res.status(400).json({ error: "Tickets sold out" });
     }
 
-    const ticket = new Ticket({ eventId, buyerEmail, user: userId });
+    const ticket = new Ticket({ eventId, buyerEmail, user: userId, status: "paid" });
     await ticket.save();
 
-    event.ticketsAvailable -= 1;
-    await event.save();
+    await Event.findOneAndUpdate(
+      { _id: eventId, ticketsAvailable: { $gt: 0 } },
+      { $inc: { ticketsAvailable: -1 } }
+    );
 
     res.status(201).json(ticket);
   } catch (error) {

@@ -65,8 +65,10 @@ describe("Ticket Routes — Integration", () => {
         .send({ eventId: "event1", buyerEmail: "buyer@test.com" });
 
       expect(res.status).toBe(201);
-      expect(mockEvent.ticketsAvailable).toBe(9);
-      expect(mockEvent.save).toHaveBeenCalled();
+      expect(Event.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: "event1", ticketsAvailable: { $gt: 0 } },
+        { $inc: { ticketsAvailable: -1 } }
+      );
     });
 
     it("should return 404 if event not found", async () => {

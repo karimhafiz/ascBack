@@ -19,11 +19,13 @@ app.use(express.json());
 app.use(cookieParser());
 
 // Update this:
+const allowedOrigins = [process.env.FRONT_END_URL?.replace(/\/$/, "")];
+if (process.env.NODE_ENV !== "production") {
+  allowedOrigins.push("http://localhost:5173");
+}
 app.use(
   cors({
-    origin: [process.env.FRONT_END_URL?.replace(/\/$/, ""), "http://localhost:5173"].filter(
-      Boolean
-    ),
+    origin: allowedOrigins.filter(Boolean),
     credentials: true,
   })
 );

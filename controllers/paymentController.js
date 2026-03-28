@@ -5,10 +5,11 @@ const User = require("../models/User");
 
 // POST /payments/create-checkout-session
 exports.createCheckoutSession = async (req, res) => {
-  const { eventId, email, quantity } = req.body;
+  const { eventId, quantity } = req.body;
+  const email = req.user.email;
 
-  if (!eventId || !email || !quantity) {
-    return res.status(400).json({ error: "eventId, email, and quantity are required" });
+  if (!eventId || !quantity) {
+    return res.status(400).json({ error: "eventId and quantity are required" });
   }
 
   try {
@@ -95,12 +96,12 @@ exports.handleSuccess = async (req, res) => {
       ticketIds.push(ticket._id);
     }
 
-    const event = await Event.findById(eventId);
-    if (event) {
-      event.ticketsAvailable = Math.max(0, event.ticketsAvailable - qty);
-      event.totalRevenue += amountPaid;
-      await event.save();
-    }
+    // Atomic decrement — collapses check + update into one operation to prevent overselling
+    await Event.findOneAndUpdate({ _id: eventId }, { $inc: { totalRevenue: amountPaid } });
+    await Event.findOneAndUpdate(
+      { _id: eventId, ticketsAvailable: { $gte: qty } },
+      { $inc: { ticketsAvailable: -qty } }
+    );
 
     res.redirect(
       `${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}&ticket_id=${ticketIds[0]}`
@@ -115,6 +116,12 @@ exports.handleSuccess = async (req, res) => {
 exports.getSession = async (req, res) => {
   try {
     const session = await stripe.checkout.sessions.retrieve(req.params.sessionId);
+
+    // Enforce ownership — only the buyer or an admin can view a session
+    if (session.customer_email !== req.user.email && req.user.role !== "admin") {
+      return res.status(403).json({ error: "Not authorised to view this session" });
+    }
+
     res.json({
       customerEmail: session.customer_email,
       amountTotal: session.amount_total / 100,
