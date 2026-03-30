@@ -21,6 +21,11 @@ const courseSchema = new mongoose.Schema(
     currentEnrollment: { type: Number, default: 0 },
     enrollmentOpen: { type: Boolean, default: true },
     isSubscription: { type: Boolean, default: false },
+    billingInterval: {
+      type: String,
+      enum: ["month", "year"],
+      default: "month",
+    },
     // Both fields are set together when a Stripe subscription product is created.
     // Either both are set or neither; one without the other is invalid state.
     stripeProductId: { type: String, default: null },
