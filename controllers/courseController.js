@@ -4,6 +4,11 @@ const User = require("../models/User");
 const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
+// Stripe moved current_period_end from subscription to subscription item
+function getSubPeriodEnd(sub) {
+  return sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
+}
+
 const ALLOWED_FIELDS = [
   "title",
   "description",
@@ -18,6 +23,7 @@ const ALLOWED_FIELDS = [
   "maxEnrollment",
   "enrollmentOpen",
   "isSubscription",
+  "billingInterval",
   "featured",
 ];
 
@@ -95,6 +101,14 @@ exports.updateCourse = async (req, res) => {
 
     const sanitized = sanitize(data);
 
+    // If billing interval or price changed on a subscription course, invalidate
+    // the cached Stripe price so a fresh one is created on next enrollment.
+    const intervalChanged =
+      sanitized.billingInterval && sanitized.billingInterval !== course.billingInterval;
+    const priceChanged = sanitized.price != null && sanitized.price !== course.price;
+    const resetStripe =
+      course.isSubscription && course.stripePriceId && (intervalChanged || priceChanged);
+
     const updated = await Course.findByIdAndUpdate(
       req.params.id,
       {
@@ -102,6 +116,7 @@ exports.updateCourse = async (req, res) => {
         featured: data.featured === true || data.featured === "true",
         enrollmentOpen: data.enrollmentOpen !== false && data.enrollmentOpen !== "false",
         images: imagePath ? [imagePath] : course.images,
+        ...(resetStripe && { stripePriceId: null, stripeProductId: null }),
       },
       { new: true }
     );
@@ -195,7 +210,7 @@ exports.enrollInCourse = async (req, res) => {
           product: product.id,
           unit_amount: Math.round(course.price * 100),
           currency: "gbp",
-          recurring: { interval: "month" },
+          recurring: { interval: course.billingInterval || "month" },
         });
         priceId = price.id;
         await Course.findByIdAndUpdate(course._id, {
@@ -312,8 +327,9 @@ exports.handleEnrollmentSuccess = async (req, res) => {
         const sub = session.subscription;
         pendingEnrollment.subscriptionId = sub.id;
         pendingEnrollment.subscriptionStatus = sub.status;
-        if (sub.current_period_end && !isNaN(sub.current_period_end)) {
-          pendingEnrollment.currentPeriodEnd = new Date(sub.current_period_end * 1000);
+        const periodTs = getSubPeriodEnd(sub);
+        if (periodTs) {
+          pendingEnrollment.currentPeriodEnd = new Date(periodTs * 1000);
         }
       }
 
@@ -334,8 +350,9 @@ exports.handleEnrollmentSuccess = async (req, res) => {
         const sub = session.subscription;
         enrollmentData.subscriptionId = sub.id;
         enrollmentData.subscriptionStatus = sub.status;
-        if (sub.current_period_end && !isNaN(sub.current_period_end)) {
-          enrollmentData.currentPeriodEnd = new Date(sub.current_period_end * 1000);
+        const periodTs = getSubPeriodEnd(sub);
+        if (periodTs) {
+          enrollmentData.currentPeriodEnd = new Date(periodTs * 1000);
         }
       }
 
@@ -389,18 +406,22 @@ exports.cancelSubscription = async (req, res) => {
       return res.status(400).json({ error: "Subscription is already cancelled" });
     }
 
-    await stripe.subscriptions.update(enrollment.subscriptionId, {
+    const updatedSub = await stripe.subscriptions.update(enrollment.subscriptionId, {
       cancel_at_period_end: true,
     });
 
+    const periodTs = getSubPeriodEnd(updatedSub);
+    const periodEnd = periodTs ? new Date(periodTs * 1000) : null;
+
     await CourseEnrollment.findByIdAndUpdate(enrollmentId, {
       subscriptionStatus: "cancelled",
+      ...(periodEnd && { currentPeriodEnd: periodEnd }),
     });
 
     res.json({
       message:
         "Subscription cancelled. You will retain access until the end of your current billing period.",
-      currentPeriodEnd: enrollment.currentPeriodEnd,
+      currentPeriodEnd: periodEnd,
     });
   } catch (err) {
     console.error("Error cancelling subscription:", err);
@@ -504,7 +525,7 @@ exports.handleWebhook = async (req, res) => {
             { subscriptionId: invoice.subscription },
             {
               subscriptionStatus: "active",
-              currentPeriodEnd: new Date(sub.current_period_end * 1000),
+              currentPeriodEnd: new Date(getSubPeriodEnd(sub) * 1000),
               status: "active",
             }
           );

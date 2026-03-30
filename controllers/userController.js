@@ -2,6 +2,7 @@ const User = require("../models/User");
 const Ticket = require("../models/Ticket");
 const Team = require("../models/Team");
 const CourseEnrollment = require("../models/CourseEnrollment");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const bcrypt = require("bcryptjs");
 const {
   generateAccessToken,
@@ -136,8 +137,34 @@ exports.getProfile = async (req, res) => {
       .sort({ createdAt: -1 });
 
     const enrollments = await CourseEnrollment.find({ buyerEmail: user.email })
-      .populate("courseId", "title instructor schedule city images price category")
+      .populate(
+        "courseId",
+        "title instructor schedule city images price category isSubscription billingInterval"
+      )
       .sort({ createdAt: -1 });
+
+    // Backfill currentPeriodEnd from Stripe for enrollments missing it
+    // Note: Stripe moved current_period_end to subscription items in newer API versions
+    const toBackfill = enrollments.filter((e) => e.subscriptionId && !e.currentPeriodEnd);
+    if (toBackfill.length) {
+      await Promise.all(
+        toBackfill.map(async (e) => {
+          try {
+            const sub = await stripe.subscriptions.retrieve(e.subscriptionId);
+            const periodEnd = sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
+            if (periodEnd) {
+              e.currentPeriodEnd = new Date(periodEnd * 1000);
+              await CourseEnrollment.findByIdAndUpdate(e._id, {
+                currentPeriodEnd: e.currentPeriodEnd,
+              });
+            }
+          } catch {
+            // Subscription may have been deleted from Stripe — skip
+          }
+        })
+      );
+    }
+
     res.json({
       user: { name: user.name, email: user.email, role: user.role },
       tickets,
