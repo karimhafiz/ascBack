@@ -7,6 +7,15 @@ jest.mock("../../models/User");
 jest.mock("../../models/Ticket");
 jest.mock("../../models/Team");
 jest.mock("../../models/CourseEnrollment");
+jest.mock("stripe", () => {
+  return jest.fn(() => ({
+    subscriptions: {
+      retrieve: jest.fn().mockResolvedValue({
+        items: { data: [{ current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30 }] },
+      }),
+    },
+  }));
+});
 jest.mock("bcryptjs");
 jest.mock("../../utils/tokenUtils", () => ({
   generateAccessToken: jest.fn(() => "mock-access-token"),
