@@ -9,22 +9,10 @@ const cookieParser = require("cookie-parser");
 
 const app = express();
 
-// CORS must run before helmet and other middleware
-const allowedOrigins = [process.env.FRONT_END_URL?.replace(/\/$/, "")];
-if (process.env.NODE_ENV !== "production") {
-  allowedOrigins.push("http://localhost:5173");
-}
+// CORS — allow all origins temporarily to debug
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin (mobile apps, curl, etc.)
-      if (!origin) return callback(null, true);
-      // Allow listed origins
-      if (allowedOrigins.filter(Boolean).includes(origin)) return callback(null, true);
-      // Allow any Vercel preview deploy
-      if (origin.endsWith(".vercel.app")) return callback(null, true);
-      callback(new Error("Not allowed by CORS"));
-    },
+    origin: true,
     credentials: true,
   })
 );
