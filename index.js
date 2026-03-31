@@ -9,10 +9,18 @@ const cookieParser = require("cookie-parser");
 
 const app = express();
 
-// CORS — allow all origins temporarily to debug
+const allowedOrigins = [process.env.FRONT_END_URL?.replace(/\/$/, "")];
+if (process.env.NODE_ENV !== "production") {
+  allowedOrigins.push("http://localhost:5173");
+}
 app.use(
   cors({
-    origin: true,
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.filter(Boolean).includes(origin)) return callback(null, true);
+      if (origin.endsWith(".vercel.app")) return callback(null, true);
+      callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   })
 );
