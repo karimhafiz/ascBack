@@ -1,5 +1,5 @@
 node_modules/
 uploads/
-.env
+.env*
 .DS_Store
 CLAUDE.md
