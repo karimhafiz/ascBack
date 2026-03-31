@@ -9,13 +9,7 @@ const cookieParser = require("cookie-parser");
 
 const app = express();
 
-app.use(helmet());
-
-app.use("/courses/webhook", express.raw({ type: "application/json" }));
-
-app.use(express.json());
-app.use(cookieParser());
-
+// CORS must run before helmet and other middleware
 const allowedOrigins = [process.env.FRONT_END_URL?.replace(/\/$/, "")];
 if (process.env.NODE_ENV !== "production") {
   allowedOrigins.push("http://localhost:5173");
@@ -34,6 +28,17 @@ app.use(
     credentials: true,
   })
 );
+
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
+
+app.use("/courses/webhook", express.raw({ type: "application/json" }));
+
+app.use(express.json());
+app.use(cookieParser());
 
 // Serve static files from the "uploads" directory
 // app.use("/uploads", express.static(path.join(__dirname, "uploads")));
