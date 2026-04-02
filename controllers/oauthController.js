@@ -36,11 +36,9 @@ exports.googleLogin = async (req, res) => {
       user = new User({ name: name || email, email, googleId, authProvider: "google" });
       await user.save();
     } else if (!user.googleId) {
-      // if existing user did not have googleId, store it
+      // existing user linking Google — store googleId
       user.googleId = googleId;
-      if (user.authProvider === "local" && !user.password) {
-        user.authProvider = "google";
-      }
+      user.authProvider = user.password ? "both" : "google";
       await user.save();
     }
 

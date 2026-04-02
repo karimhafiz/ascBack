@@ -107,7 +107,7 @@ exports.verifyTicket = async (req, res) => {
   try {
     const ticket = await Ticket.findOne({ ticketCode: req.params.ticketCode })
       .populate("eventId", "title date openingTime street city images")
-      .populate("user", "name");
+      .populate("user", "name email");
 
     if (!ticket) return res.status(404).json({ message: "Ticket not found" });
     res.json(ticket);
@@ -133,7 +133,7 @@ exports.checkInTicket = async (req, res) => {
 
     await ticket.save();
     await ticket.populate("eventId", "title date openingTime street city images");
-    await ticket.populate("user", "name");
+    await ticket.populate("user", "name email");
 
     const response = ticket.toObject();
     response.wasAlreadyCheckedIn = wasAlreadyCheckedIn;
@@ -146,10 +146,13 @@ exports.checkInTicket = async (req, res) => {
   }
 };
 
-// GET /tickets/:id — owner or staff
+// GET /tickets/:id — owner or staff (supports both MongoDB _id and ticketCode)
 exports.getTicketById = async (req, res) => {
   try {
-    const ticket = await Ticket.findById(req.params.id)
+    const param = req.params.id;
+    const isTicketCode = /^TKT-[A-Z2-9]{6}$/.test(param);
+    const query = isTicketCode ? Ticket.findOne({ ticketCode: param }) : Ticket.findById(param);
+    const ticket = await query
       .populate(
         "eventId",
         "title date street city postCode images ticketPrice typeOfEvent openingTime"

@@ -96,19 +96,22 @@ describe("User Controller", () => {
       expect(response.body.message).toBe("Email already in use.");
     });
 
-    it("should return 400 with Google hint if email is a Google account", async () => {
-      User.findOne.mockResolvedValue({
+    it("should add password to existing Google-only account", async () => {
+      const mockGoogleUser = {
         email: "test@example.com",
         authProvider: "google",
         googleId: "g123",
-      });
+        save: jest.fn().mockResolvedValue(true),
+      };
+      User.findOne.mockResolvedValue(mockGoogleUser);
 
       const response = await request(app)
         .post("/api/users/register")
         .send({ name: "Test", email: "test@example.com", password: "password123" });
 
-      expect(response.status).toBe(400);
-      expect(response.body.authMethod).toBe("google");
+      expect(response.status).toBe(201);
+      expect(mockGoogleUser.authProvider).toBe("both");
+      expect(mockGoogleUser.save).toHaveBeenCalled();
     });
   });
 
