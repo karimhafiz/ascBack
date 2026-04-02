@@ -95,12 +95,13 @@ exports.createEvent = async (req, res) => {
 exports.updateEvent = async (req, res) => {
   try {
     let eventData;
+    console.log(req.body);
     try {
       eventData = JSON.parse(req.body.eventData);
     } catch {
       return res.status(400).json({ error: "Invalid JSON in eventData" });
     }
-
+    console.log("req.params.id:", req.params.id);
     const event = await Event.findById(req.params.id);
     if (!event) {
       return res.status(404).json({ error: "Event not found" });
