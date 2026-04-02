@@ -17,16 +17,18 @@ exports.register = async (req, res) => {
     const { name, email, password } = req.body;
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      if (
-        existingUser.authProvider === "google" ||
-        (!existingUser.password && existingUser.googleId)
-      ) {
-        return res.status(400).json({
-          message: "This email is linked to a Google account. Please log in with Google.",
-          authMethod: "google",
-        });
+      if (existingUser.password) {
+        return res.status(400).json({ message: "Email already in use." });
       }
-      return res.status(400).json({ message: "Email already in use." });
+      // Google-only user registering with password — add password to existing account
+      existingUser.password = await bcrypt.hash(password, 10);
+      existingUser.authProvider = "both";
+      await existingUser.save();
+      return res
+        .status(201)
+        .json({
+          message: "Password added to your account. You can now log in with email or Google.",
+        });
     }
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = new User({
@@ -49,9 +51,10 @@ exports.login = async (req, res) => {
     const user = await User.findOne({ email });
     if (!user) return res.status(400).json({ message: "Invalid credentials" });
 
-    if (user.authProvider === "google" || (!user.password && user.googleId)) {
+    if (!user.password) {
       return res.status(400).json({
-        message: "This account uses Google Sign-In. Please log in with Google.",
+        message:
+          "This account uses Google Sign-In. Please log in with Google or register with a password.",
         authMethod: "google",
       });
     }
