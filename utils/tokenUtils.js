@@ -20,6 +20,12 @@ function hashToken(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+function setRefreshTokenExpiration() {
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + 7); // 7 days from now
+  return expiresAt;
+}
+
 function setRefreshTokenCookie(res, refreshToken) {
   const isProduction = process.env.NODE_ENV === "production";
   res.cookie("refreshToken", refreshToken, {
@@ -47,4 +53,5 @@ module.exports = {
   hashToken,
   setRefreshTokenCookie,
   clearRefreshTokenCookie,
+  setRefreshTokenExpiration,
 };

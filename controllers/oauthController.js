@@ -5,6 +5,7 @@ const {
   generateRefreshToken,
   hashToken,
   setRefreshTokenCookie,
+  setRefreshTokenExpiration,
 } = require("../utils/tokenUtils");
 
 // Initialize a client with the client ID from environment
@@ -48,6 +49,7 @@ exports.googleLogin = async (req, res) => {
     const refreshToken = generateRefreshToken();
 
     user.refreshToken = hashToken(refreshToken);
+    user.refreshTokenExpiresAt = setRefreshTokenExpiration();
     await user.save();
 
     setRefreshTokenCookie(res, refreshToken);

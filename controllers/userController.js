@@ -10,6 +10,7 @@ const {
   hashToken,
   setRefreshTokenCookie,
   clearRefreshTokenCookie,
+  setRefreshTokenExpiration,
 } = require("../utils/tokenUtils");
 
 exports.register = async (req, res) => {
@@ -24,11 +25,9 @@ exports.register = async (req, res) => {
       existingUser.password = await bcrypt.hash(password, 10);
       existingUser.authProvider = "both";
       await existingUser.save();
-      return res
-        .status(201)
-        .json({
-          message: "Password added to your account. You can now log in with email or Google.",
-        });
+      return res.status(201).json({
+        message: "Password added to your account. You can now log in with email or Google.",
+      });
     }
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = new User({
@@ -68,6 +67,7 @@ exports.login = async (req, res) => {
     const refreshToken = generateRefreshToken();
 
     user.refreshToken = hashToken(refreshToken);
+    user.refreshTokenExpiresAt = setRefreshTokenExpiration();
     await user.save();
 
     setRefreshTokenCookie(res, refreshToken);
@@ -93,6 +93,12 @@ exports.refresh = async (req, res) => {
     if (!user) {
       clearRefreshTokenCookie(res);
       return res.status(403).json({ message: "Invalid refresh token" });
+    }
+
+    if (!user.refreshTokenExpiresAt || user.refreshTokenExpiresAt < new Date()) {
+      clearRefreshTokenCookie(res);
+      await User.findByIdAndUpdate(user._id, { refreshToken: null, refreshTokenExpiresAt: null });
+      return res.status(403).json({ message: "Refresh token expired" });
     }
 
     if (user.isBanned) {
