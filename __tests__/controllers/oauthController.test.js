@@ -11,6 +11,7 @@ jest.mock("../../utils/tokenUtils", () => ({
   generateRefreshToken: jest.fn(() => "mock-refresh-token"),
   hashToken: jest.fn((token) => "hashed-" + token),
   setRefreshTokenCookie: jest.fn(),
+  setRefreshTokenExpiration: jest.fn(() => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)),
 }));
 
 // Mock google-auth-library
