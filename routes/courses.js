@@ -26,11 +26,21 @@ router.get(
 // authenticated — enroll
 router.post("/:courseId/enroll", authMiddleware, courseController.enrollInCourse);
 
+// authenticated — get my enrollment for a course
+router.get("/:courseId/my-enrollment", authMiddleware, courseController.getMyEnrollment);
+
 // authenticated — cancel subscription
 router.post(
   "/enrollments/:enrollmentId/cancel",
   authMiddleware,
   courseController.cancelSubscription
+);
+
+// authenticated — add a participant to enrollment
+router.post(
+  "/enrollments/:enrollmentId/add-participant",
+  authMiddleware,
+  courseController.addParticipant
 );
 
 // authenticated — remove a participant from enrollment
