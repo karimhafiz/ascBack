@@ -2,6 +2,7 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const Ticket = require("../models/Ticket");
 const Event = require("../models/Event");
 const User = require("../models/User");
+const { sendTicketConfirmationEmail } = require("../utils/emailUtils");
 
 // POST /payments/create-checkout-session
 exports.createCheckoutSession = async (req, res) => {
@@ -101,6 +102,13 @@ exports.handleSuccess = async (req, res) => {
     await Event.findOneAndUpdate(
       { _id: eventId, ticketsAvailable: { $gte: qty } },
       { $inc: { ticketsAvailable: -qty } }
+    );
+
+    // Fire-and-forget: send confirmation email without blocking the redirect
+    const event = await Event.findById(eventId);
+    const createdTickets = await Ticket.find({ paymentId: session.id });
+    sendTicketConfirmationEmail({ buyerEmail: email, tickets: createdTickets, event }).catch(
+      (err) => console.error("Failed to send ticket confirmation email:", err)
     );
 
     res.redirect(
