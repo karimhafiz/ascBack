@@ -1,23 +1,34 @@
 const cloudinary = require("../config/cloudinary");
 
 /**
- * Extracts the Cloudinary public ID from a URL and deletes the image.
+ * Deletes an image from Cloudinary using its public ID or URL.
  * Throws on failure so callers can detect and log deletion errors.
  *
- * Handles standard Cloudinary URLs:
- *   https://res.cloudinary.com/<cloud>/image/upload/v<ver>/<folder>/<filename>.<ext>
+ * Accepts either:
+ *   1. Cloudinary public ID directly (e.g. "page-images/hero_abc123")
+ *   2. Full Cloudinary URL (extracts public ID from URL)
  *
- * @param {string} imageUrl - Full Cloudinary image URL
- * @param {string} folder   - Cloudinary folder prefix (e.g. "event-images")
+ * @param {string} publicIdOrUrl - Cloudinary public ID or full URL
+ * @param {string} [folder] - (Optional) Folder prefix if extracting from URL
  */
-async function deleteCloudinaryImage(imageUrl, folder) {
-  // Strip query string, take the last path segment, remove extension
-  const filename = imageUrl.split("?")[0].split("/").pop();
-  if (!filename) {
-    throw new Error(`Cannot extract filename from Cloudinary URL: ${imageUrl}`);
+async function deleteCloudinaryImage(publicIdOrUrl, folder) {
+  if (!publicIdOrUrl) {
+    throw new Error("Cannot delete image: public ID or URL is missing");
   }
-  const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
-  const publicId = `${folder}/${nameWithoutExt}`;
+
+  let publicId = publicIdOrUrl;
+
+  // If it looks like a URL, extract the public ID
+  if (publicIdOrUrl.includes("/") && publicIdOrUrl.includes(".")) {
+    // Strip query string, take the last path segment, remove extension
+    const filename = publicIdOrUrl.split("?")[0].split("/").pop();
+    if (!filename) {
+      throw new Error(`Cannot extract filename from Cloudinary URL: ${publicIdOrUrl}`);
+    }
+    const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
+    publicId = folder ? `${folder}/${nameWithoutExt}` : nameWithoutExt;
+  }
+
   await cloudinary.uploader.destroy(publicId);
 }
 

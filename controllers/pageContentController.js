@@ -9,8 +9,8 @@ exports.resetPageContent = async (req, res) => {
     const existing = await PageContent.findOne({ page });
 
     if (page === "home") {
-      if (existing?.heroImage) {
-        await deleteCloudinaryImage(existing.heroImage, "page-images");
+      if (existing?.heroImageId) {
+        await deleteCloudinaryImage(existing.heroImageId);
       }
       await PageContent.deleteOne({ page });
       return res.json({ message: "Page content reset to defaults" });
@@ -83,10 +83,11 @@ exports.updatePageContent = async (req, res) => {
     // Handle image upload for heroImage (home page)
     if (req.file && page === "home") {
       const existing = await PageContent.findOne({ page: "home" });
-      if (existing?.heroImage) {
-        await deleteCloudinaryImage(existing.heroImage, "page-images");
+      if (existing?.heroImageId) {
+        await deleteCloudinaryImage(existing.heroImageId);
       }
       updates.heroImage = req.file.secure_url;
+      updates.heroImageId = req.file.public_id;
     }
 
     // Handle activity card image uploads (about page)

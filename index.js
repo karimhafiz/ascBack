@@ -53,7 +53,7 @@ app.use(async (req, res, next) => {
   try {
     await connectDB();
     next();
-  } catch (error) {
+  } catch {
     res.status(500).json({ error: "Database connection failed" });
   }
 });

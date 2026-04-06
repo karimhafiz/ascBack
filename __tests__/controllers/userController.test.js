@@ -23,6 +23,7 @@ jest.mock("../../utils/tokenUtils", () => ({
   hashToken: jest.fn((token) => "hashed-" + token),
   setRefreshTokenCookie: jest.fn(),
   clearRefreshTokenCookie: jest.fn(),
+  setRefreshTokenExpiration: jest.fn(() => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)),
 }));
 
 const User = require("../../models/User");
@@ -192,6 +193,7 @@ describe("User Controller", () => {
         name: "Test",
         email: "test@example.com",
         role: "user",
+        refreshTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       };
       // Controller hashes the token before querying
       User.findOne.mockResolvedValue(mockUser);
