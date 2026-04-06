@@ -2,6 +2,10 @@ const Course = require("../models/Course");
 const CourseEnrollment = require("../models/CourseEnrollment");
 const User = require("../models/User");
 const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
+const {
+  sendCourseEnrollmentEmail,
+  sendSubscriptionCancellationEmail,
+} = require("../utils/emailUtils");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 // Stripe moved current_period_end from subscription to subscription item
@@ -195,6 +199,11 @@ exports.enrollInCourse = async (req, res) => {
       });
       await enrollment.save();
       await Course.findByIdAndUpdate(course._id, { $inc: { currentEnrollment: count } });
+
+      sendCourseEnrollmentEmail({ buyerEmail: email, course, enrollment }).catch((err) =>
+        console.error("Failed to send course enrollment email:", err)
+      );
+
       return res.json({ message: "Enrolled successfully", enrollment });
     }
 
@@ -362,6 +371,15 @@ exports.handleEnrollmentSuccess = async (req, res) => {
 
     await Course.findByIdAndUpdate(courseId, { $inc: { currentEnrollment: count } });
 
+    const course = await Course.findById(courseId);
+    const finalEnrollment =
+      pendingEnrollment || (await CourseEnrollment.findOne({ paymentId: session.id }));
+    if (course && finalEnrollment) {
+      sendCourseEnrollmentEmail({ buyerEmail: email, course, enrollment: finalEnrollment }).catch(
+        (err) => console.error("Failed to send course enrollment email:", err)
+      );
+    }
+
     res.redirect(`${process.env.FRONT_END_URL}course-confirmation?courseId=${courseId}`);
   } catch (err) {
     console.error("Enrollment success error:", err);
@@ -417,6 +435,15 @@ exports.cancelSubscription = async (req, res) => {
       subscriptionStatus: "cancelled",
       ...(periodEnd && { currentPeriodEnd: periodEnd }),
     });
+
+    const course = await Course.findById(enrollment.courseId);
+    if (course) {
+      sendSubscriptionCancellationEmail({
+        buyerEmail: enrollment.buyerEmail,
+        course,
+        currentPeriodEnd: periodEnd,
+      }).catch((err) => console.error("Failed to send cancellation email:", err));
+    }
 
     res.json({
       message:
