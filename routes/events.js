@@ -22,9 +22,9 @@ router.post(
 // update
 router.put(
   "/:id",
+  upload.single("image"),
   authMiddleware,
   authorize("admin", "moderator"),
-  upload.single("image"),
   eventController.updateEvent
 );
 router.delete("/:id", authMiddleware, authorize("admin", "moderator"), eventController.deleteEvent);

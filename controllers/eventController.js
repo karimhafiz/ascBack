@@ -71,7 +71,7 @@ exports.createEvent = async (req, res) => {
       return res.status(400).json({ error: "Invalid JSON in eventData" });
     }
 
-    const imageUrl = req.file ? req.file.path : null;
+    const imageUrl = req.file ? req.file.path || req.file.secure_url : null;
     const sanitized = sanitize(eventData);
 
     const newEvent = new Event({
@@ -95,7 +95,6 @@ exports.createEvent = async (req, res) => {
 exports.updateEvent = async (req, res) => {
   try {
     let eventData;
-    console.log(req.body);
     try {
       eventData = JSON.parse(req.body.eventData);
     } catch {
@@ -112,7 +111,7 @@ exports.updateEvent = async (req, res) => {
       if (event.images && event.images.length > 0) {
         await deleteCloudinaryImage(event.images[0], "event-images");
       }
-      imagePath = req.file.path;
+      imagePath = req.file.path || req.file.secure_url;
     }
 
     const sanitized = sanitize(eventData);

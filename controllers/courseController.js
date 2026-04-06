@@ -210,6 +210,16 @@ exports.enrollInCourse = async (req, res) => {
     // ── Subscription flow ──────────────────────────────────────────────────
     if (course.isSubscription) {
       let priceId = course.stripePriceId;
+
+      // Validate the cached price still exists in Stripe
+      if (priceId) {
+        try {
+          await stripe.prices.retrieve(priceId);
+        } catch {
+          priceId = null;
+        }
+      }
+
       if (!priceId) {
         const product = await stripe.products.create({
           name: course.title,
@@ -453,6 +463,93 @@ exports.cancelSubscription = async (req, res) => {
   } catch (err) {
     console.error("Error cancelling subscription:", err);
     res.status(500).json({ error: "Failed to cancel subscription" });
+  }
+};
+
+// ─── GET /courses/:courseId/my-enrollment ─────────────────────────────────────
+// Returns the current user's active enrollment for this course, if any.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.getMyEnrollment = async (req, res) => {
+  try {
+    const enrollment = await CourseEnrollment.findOne({
+      courseId: req.params.courseId,
+      buyerEmail: req.user.email,
+      status: { $in: ["paid", "free", "active", "past_due"] },
+    });
+    if (!enrollment) return res.json({ enrollment: null });
+    res.json({ enrollment });
+  } catch (err) {
+    console.error("Error fetching enrollment:", err);
+    res.status(500).json({ error: "Failed to fetch enrollment" });
+  }
+};
+
+// ─── POST /courses/enrollments/:enrollmentId/add-participant ─────────────────
+// Adds a participant to an existing enrollment.
+// For subscriptions, also increases the Stripe subscription quantity.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.addParticipant = async (req, res) => {
+  try {
+    const { enrollmentId } = req.params;
+    const { name, age, email } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "Participant name is required" });
+    }
+
+    const enrollment = await CourseEnrollment.findById(enrollmentId);
+    if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
+
+    if (enrollment.status === "cancelled") {
+      return res.status(400).json({ error: "Cannot add participants to a cancelled enrollment" });
+    }
+
+    const ownerId = enrollment.user?.toString();
+    const isOwner = ownerId ? ownerId === req.user.id : enrollment.buyerEmail === req.user.email;
+    if (!isOwner && req.user.role !== "admin") {
+      return res.status(403).json({ error: "Not authorised" });
+    }
+
+    const course = await Course.findById(enrollment.courseId);
+    if (course.maxEnrollment && course.currentEnrollment >= course.maxEnrollment) {
+      return res.status(400).json({ error: "Course is full" });
+    }
+
+    if (enrollment.subscriptionId && enrollment.subscriptionStatus !== "cancelled") {
+      try {
+        const subscription = await stripe.subscriptions.retrieve(enrollment.subscriptionId);
+        const subItem = subscription.items.data[0];
+        if (subItem) {
+          await stripe.subscriptionItems.update(subItem.id, {
+            quantity: enrollment.participants.length + 1,
+          });
+        }
+      } catch (stripeErr) {
+        console.error("Stripe subscription update error:", stripeErr);
+        return res.status(502).json({
+          error: "Failed to update subscription billing. Please try again.",
+        });
+      }
+    }
+
+    enrollment.participants.push({
+      name: name.trim(),
+      age: age || undefined,
+      email: email || undefined,
+    });
+    await enrollment.save();
+
+    await Course.findByIdAndUpdate(enrollment.courseId, {
+      $inc: { currentEnrollment: 1 },
+    });
+
+    res.json({
+      message: `${name.trim()} has been added to this enrollment.`,
+      participants: enrollment.participants,
+    });
+  } catch (err) {
+    console.error("Error adding participant:", err);
+    res.status(500).json({ error: "Failed to add participant" });
   }
 };
 
