@@ -78,7 +78,7 @@ describe("Team Controller", () => {
         .send({
           name: "Team A",
           members: [{ name: "Player 1" }],
-          manager: { name: "Manager", email: "m@test.com" },
+          manager: { name: "Manager", email: "m@test.com", phone: "07123456789" },
         });
 
       expect(Event.findById).toHaveBeenCalledWith("event1");
@@ -102,7 +102,7 @@ describe("Team Controller", () => {
         .send({
           name: "New Name",
           members: [{ name: "Player 1" }],
-          manager: { name: "Manager", email: "m@test.com" },
+          manager: { name: "Manager", email: "m@test.com", phone: "07123456789" },
         });
 
       expect(Event.findById).toHaveBeenCalledWith("event1");
