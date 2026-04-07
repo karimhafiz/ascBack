@@ -1,6 +1,7 @@
 const Team = require("../models/Team");
 const Event = require("../models/Event");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+const { sendTeamRegistrationEmail, sendTeamUpdateEmail } = require("../utils/emailUtils");
 
 // Get a single team by ID
 exports.getTeam = async (req, res) => {
@@ -24,6 +25,9 @@ exports.signupTeam = async (req, res) => {
 
     if (!name || !members || !Array.isArray(members) || members.length === 0) {
       return res.status(400).json({ error: "Team name and members are required" });
+    }
+    if (!manager?.phone || !manager.phone.trim()) {
+      return res.status(400).json({ error: "Manager phone number is required" });
     }
 
     const event = await Event.findById(eventId);
@@ -127,10 +131,21 @@ exports.handlePaymentSuccess = async (req, res) => {
       return res.redirect(`${process.env.FRONT_END_URL}events`);
     }
 
-    await Team.findByIdAndUpdate(teamId, {
-      paid: true,
-      paymentId: session.id,
-    });
+    const team = await Team.findByIdAndUpdate(
+      teamId,
+      { paid: true, paymentId: session.id },
+      { new: true }
+    );
+
+    // Send confirmation emails to manager + members in the background
+    if (team) {
+      const event = await Event.findById(team.event);
+      if (event) {
+        sendTeamRegistrationEmail({ team, event }).catch((err) =>
+          console.error("Team registration email error:", err)
+        );
+      }
+    }
 
     res.redirect(`${process.env.FRONT_END_URL}team-confirmation?teamId=${teamId}`);
   } catch (error) {
@@ -176,6 +191,77 @@ exports.getUnpaidTeamsForManager = async (req, res) => {
     res.json({ teams });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch unpaid teams" });
+  }
+};
+
+// List my paid teams for an event (authenticated)
+exports.getMyTeamsForEvent = async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const email = req.user.email;
+    const teams = await Team.find({ event: eventId, "manager.email": email, paid: true });
+    res.json(teams);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch your teams" });
+  }
+};
+
+// ─── PUT /teams/:teamId ───────────────────────────────────────────────────────
+// Manager can edit their paid team: update name, add/remove/edit members.
+// Sends notification emails to new members and the manager about the change.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.updateTeam = async (req, res) => {
+  try {
+    const { teamId } = req.params;
+    const { name, members, manager } = req.body;
+    const email = req.user.email;
+
+    const team = await Team.findById(teamId);
+    if (!team) return res.status(404).json({ error: "Team not found" });
+
+    // Only the manager can edit
+    if (team.manager.email !== email) {
+      return res.status(403).json({ error: "Only the team manager can edit this team" });
+    }
+
+    if (!team.paid) {
+      return res.status(400).json({ error: "Cannot edit an unpaid team" });
+    }
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "Team name is required" });
+    }
+    if (!members || !Array.isArray(members) || members.length === 0) {
+      return res.status(400).json({ error: "At least one team member is required" });
+    }
+
+    // Track which members are new (for email notifications)
+    const oldEmails = new Set(team.members.map((m) => m.email?.toLowerCase()).filter(Boolean));
+    const newMembers = members.filter((m) => m.email && !oldEmails.has(m.email.toLowerCase()));
+
+    team.name = name.trim();
+    team.members = members;
+
+    // Update manager name and phone (email stays the same)
+    if (manager) {
+      if (manager.name) team.manager.name = manager.name.trim();
+      if (manager.phone) team.manager.phone = manager.phone.trim();
+    }
+
+    await team.save();
+
+    // Send update emails in the background
+    const event = await Event.findById(team.event);
+    if (event) {
+      sendTeamUpdateEmail({ team, event, newMembers }).catch((err) =>
+        console.error("Team update email error:", err)
+      );
+    }
+
+    res.json({ message: "Team updated successfully", team });
+  } catch (error) {
+    console.error("Update team error:", error);
+    res.status(500).json({ error: "Failed to update team" });
   }
 };
 

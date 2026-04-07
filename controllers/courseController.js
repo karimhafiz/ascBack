@@ -152,8 +152,11 @@ exports.deleteCourse = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exports.enrollInCourse = async (req, res) => {
   try {
-    const { participants = [] } = req.body;
+    const { participants = [], phone } = req.body;
     const email = req.user.email;
+    if (!phone || !phone.trim()) {
+      return res.status(400).json({ error: "Phone number is required" });
+    }
     if (!participants.length) {
       return res.status(400).json({ error: "At least one participant is required" });
     }
@@ -194,6 +197,7 @@ exports.enrollInCourse = async (req, res) => {
         courseId: course._id,
         user: user?._id ?? null,
         buyerEmail: email,
+        buyerPhone: phone.trim(),
         status: "free",
         participants,
       });
@@ -248,6 +252,7 @@ exports.enrollInCourse = async (req, res) => {
         metadata: {
           courseId: course._id.toString(),
           email,
+          phone: phone.trim(),
           count: count.toString(),
           isSubscription: "true",
         },
@@ -258,6 +263,7 @@ exports.enrollInCourse = async (req, res) => {
         courseId: course._id,
         user: user?._id ?? null,
         buyerEmail: email,
+        buyerPhone: phone.trim(),
         pendingSessionId: session.id,
         status: "pending",
         participants,
@@ -290,7 +296,12 @@ exports.enrollInCourse = async (req, res) => {
       mode: "payment",
       success_url: `${process.env.BACK_END_URL}courses/${course._id}/enrollment-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.FRONT_END_URL}courses/${course._id}`,
-      metadata: { courseId: course._id.toString(), email, count: count.toString() },
+      metadata: {
+        courseId: course._id.toString(),
+        email,
+        phone: phone.trim(),
+        count: count.toString(),
+      },
     });
 
     const user = await User.findOne({ email });
@@ -298,6 +309,7 @@ exports.enrollInCourse = async (req, res) => {
       courseId: course._id,
       user: user?._id ?? null,
       buyerEmail: email,
+      buyerPhone: phone.trim(),
       pendingSessionId: session.id,
       status: "pending",
       participants,
@@ -326,6 +338,42 @@ exports.handleEnrollmentSuccess = async (req, res) => {
     const existing = await CourseEnrollment.findOne({ paymentId: session.id });
     if (existing)
       return res.redirect(`${process.env.FRONT_END_URL}course-confirmation?courseId=${courseId}`);
+
+    // ── Reactivation flow — update existing enrollment with new subscription ──
+    const reactivateId = session.metadata?.reactivateEnrollmentId;
+    if (reactivateId) {
+      const enrollment = await CourseEnrollment.findById(reactivateId);
+      if (enrollment) {
+        enrollment.paymentId = session.id;
+        enrollment.status = "active";
+        enrollment.subscriptionStatus = session.subscription?.status || "active";
+        enrollment.pendingSessionId = undefined;
+
+        if (session.subscription) {
+          const sub = session.subscription;
+          enrollment.subscriptionId = sub.id;
+          const periodTs = getSubPeriodEnd(sub);
+          if (periodTs) {
+            enrollment.currentPeriodEnd = new Date(periodTs * 1000);
+          }
+        }
+
+        await enrollment.save();
+
+        const course = await Course.findById(courseId);
+        if (course) {
+          sendCourseEnrollmentEmail({
+            buyerEmail: enrollment.buyerEmail,
+            course,
+            enrollment,
+          }).catch((err) => console.error("Failed to send reactivation email:", err));
+        }
+
+        return res.redirect(
+          `${process.env.FRONT_END_URL}course-confirmation?courseId=${courseId}&reactivated=true`
+        );
+      }
+    }
 
     const pendingEnrollment = await CourseEnrollment.findOne({
       pendingSessionId: session.id,
@@ -360,6 +408,7 @@ exports.handleEnrollmentSuccess = async (req, res) => {
         courseId,
         user: user?._id ?? null,
         buyerEmail: email,
+        buyerPhone: session.metadata?.phone || "N/A",
         paymentId: session.id,
         status: isSubscription ? "active" : "paid",
         participants,
@@ -466,6 +515,133 @@ exports.cancelSubscription = async (req, res) => {
   }
 };
 
+// ─── POST /courses/enrollments/:enrollmentId/reactivate ─────────────────────
+// User reactivates a subscription that was cancelled but hasn't expired yet.
+// Removes cancel_at_period_end in Stripe so the subscription continues renewing.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.reactivateSubscription = async (req, res) => {
+  try {
+    const { enrollmentId } = req.params;
+    const enrollment = await CourseEnrollment.findById(enrollmentId);
+    if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
+
+    const ownerId = enrollment.user?.toString();
+    const isOwner = ownerId ? ownerId === req.user.id : enrollment.buyerEmail === req.user.email;
+    if (!isOwner && req.user.role !== "admin") {
+      return res.status(403).json({ error: "Not authorised" });
+    }
+
+    if (!enrollment.subscriptionId) {
+      return res.status(400).json({ error: "This enrollment is not a subscription" });
+    }
+
+    if (enrollment.subscriptionStatus !== "cancelled") {
+      return res.status(400).json({ error: "Subscription is not cancelled" });
+    }
+
+    // Try to reactivate in Stripe by removing cancel_at_period_end
+    let canReactivateDirectly = false;
+    try {
+      const stripeSub = await stripe.subscriptions.retrieve(enrollment.subscriptionId);
+      // Subscription still exists and isn't fully terminated
+      if (stripeSub.status !== "canceled") {
+        canReactivateDirectly = true;
+      }
+    } catch (stripeErr) {
+      if (stripeErr.code !== "resource_missing") throw stripeErr;
+      // Subscription gone from Stripe — fall through to checkout flow
+    }
+
+    if (canReactivateDirectly) {
+      const updatedSub = await stripe.subscriptions.update(enrollment.subscriptionId, {
+        cancel_at_period_end: false,
+      });
+
+      const periodTs = getSubPeriodEnd(updatedSub);
+      const periodEnd = periodTs ? new Date(periodTs * 1000) : null;
+
+      await CourseEnrollment.findByIdAndUpdate(enrollmentId, {
+        subscriptionStatus: "active",
+        ...(periodEnd && { currentPeriodEnd: periodEnd }),
+      });
+
+      return res.json({
+        message: "Subscription reactivated successfully.",
+        currentPeriodEnd: periodEnd,
+      });
+    }
+
+    // Stripe subscription is gone — create a new checkout session so the user
+    // can resubscribe. The existing enrollment will be updated on success.
+    const course = await Course.findById(enrollment.courseId);
+    if (!course) return res.status(404).json({ error: "Course not found" });
+
+    let priceId = course.stripePriceId;
+    if (priceId) {
+      try {
+        await stripe.prices.retrieve(priceId);
+      } catch {
+        priceId = null;
+      }
+    }
+    if (!priceId) {
+      const product = await stripe.products.create({
+        name: course.title,
+        description: course.shortDescription || course.instructor || "",
+      });
+      const price = await stripe.prices.create({
+        product: product.id,
+        unit_amount: Math.round(course.price * 100),
+        currency: "gbp",
+        recurring: { interval: course.billingInterval || "month" },
+      });
+      priceId = price.id;
+      await Course.findByIdAndUpdate(course._id, {
+        stripeProductId: product.id,
+        stripePriceId: priceId,
+      });
+    }
+
+    const count = enrollment.participants?.length || 1;
+
+    // If the user still has time left on their current period, defer
+    // the first charge to when that period ends so they don't pay twice.
+    const subscriptionData = {};
+    if (enrollment.currentPeriodEnd && new Date(enrollment.currentPeriodEnd) > new Date()) {
+      subscriptionData.trial_end = Math.floor(
+        new Date(enrollment.currentPeriodEnd).getTime() / 1000
+      );
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      customer_email: enrollment.buyerEmail,
+      line_items: [{ price: priceId, quantity: count }],
+      mode: "subscription",
+      ...(subscriptionData.trial_end && { subscription_data: subscriptionData }),
+      success_url: `${process.env.BACK_END_URL}courses/${course._id}/enrollment-success?session_id={CHECKOUT_SESSION_ID}&reactivate=${enrollmentId}`,
+      cancel_url: `${process.env.FRONT_END_URL}courses/${course._id}`,
+      metadata: {
+        courseId: course._id.toString(),
+        email: enrollment.buyerEmail,
+        count: count.toString(),
+        isSubscription: "true",
+        reactivateEnrollmentId: enrollmentId,
+      },
+    });
+
+    // Mark enrollment as pending reactivation
+    await CourseEnrollment.findByIdAndUpdate(enrollmentId, {
+      pendingSessionId: session.id,
+    });
+
+    return res.json({ url: session.url });
+  } catch (err) {
+    console.error("Error reactivating subscription:", err);
+    res.status(500).json({ error: "Failed to reactivate subscription" });
+  }
+};
+
 // ─── GET /courses/:courseId/my-enrollment ─────────────────────────────────────
 // Returns the current user's active enrollment for this course, if any.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -477,6 +653,25 @@ exports.getMyEnrollment = async (req, res) => {
       status: { $in: ["paid", "free", "active", "past_due"] },
     });
     if (!enrollment) return res.json({ enrollment: null });
+
+    // If this is a cancelled subscription whose paid period has passed,
+    // expire it now. The user paid through currentPeriodEnd — honour that.
+    if (
+      enrollment.subscriptionId &&
+      enrollment.subscriptionStatus === "cancelled" &&
+      enrollment.currentPeriodEnd &&
+      new Date(enrollment.currentPeriodEnd) < new Date()
+    ) {
+      const count = enrollment.participants?.length || 1;
+      await CourseEnrollment.findByIdAndUpdate(enrollment._id, {
+        status: "cancelled",
+      });
+      await Course.findByIdAndUpdate(enrollment.courseId, {
+        $inc: { currentEnrollment: -count },
+      });
+      return res.json({ enrollment: null });
+    }
+
     res.json({ enrollment });
   } catch (err) {
     console.error("Error fetching enrollment:", err);
@@ -502,6 +697,10 @@ exports.addParticipant = async (req, res) => {
 
     if (enrollment.status === "cancelled") {
       return res.status(400).json({ error: "Cannot add participants to a cancelled enrollment" });
+    }
+
+    if (enrollment.subscriptionId && enrollment.subscriptionStatus === "cancelled") {
+      return res.status(400).json({ error: "Cannot add participants to a cancelled subscription" });
     }
 
     const ownerId = enrollment.user?.toString();
@@ -584,6 +783,13 @@ exports.removeParticipant = async (req, res) => {
     if (enrollment.participants.length <= 1) {
       return res.status(400).json({
         error: "Cannot remove the last participant. Cancel the enrollment instead.",
+      });
+    }
+
+    if (enrollment.subscriptionId && enrollment.subscriptionStatus === "cancelled") {
+      return res.status(400).json({
+        error:
+          "Cannot remove participants from a cancelled subscription. All participants retain access until the end of the billing period.",
       });
     }
 

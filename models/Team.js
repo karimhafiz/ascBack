@@ -13,6 +13,7 @@ const teamSchema = new mongoose.Schema(
     manager: {
       name: { type: String, required: true },
       email: { type: String, required: true },
+      phone: { type: String, required: true },
     },
     paid: { type: Boolean, default: false },
     paymentId: { type: String },
