@@ -36,6 +36,13 @@ router.post(
   courseController.cancelSubscription
 );
 
+// authenticated — reactivate cancelled subscription
+router.post(
+  "/enrollments/:enrollmentId/reactivate",
+  authMiddleware,
+  courseController.reactivateSubscription
+);
+
 // authenticated — add a participant to enrollment
 router.post(
   "/enrollments/:enrollmentId/add-participant",

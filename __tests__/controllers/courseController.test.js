@@ -146,7 +146,11 @@ describe("Course Controller", () => {
 
       const res = await request(app)
         .post("/api/courses/c1/enroll")
-        .send({ email: "t@t.com", participants: [{ name: "Test", age: 20 }] });
+        .send({
+          email: "t@t.com",
+          phone: "07123456789",
+          participants: [{ name: "Test", age: 20 }],
+        });
 
       expect(res.status).toBe(200);
       expect(res.body.message).toBe("Enrolled successfully");
@@ -155,7 +159,7 @@ describe("Course Controller", () => {
     it("should return 400 if no participants", async () => {
       const res = await request(app)
         .post("/api/courses/c1/enroll")
-        .send({ email: "t@t.com", participants: [] });
+        .send({ email: "t@t.com", phone: "07123456789", participants: [] });
 
       expect(res.status).toBe(400);
     });
@@ -169,7 +173,7 @@ describe("Course Controller", () => {
 
       const res = await request(app)
         .post("/api/courses/c1/enroll")
-        .send({ email: "t@t.com", participants: [{ name: "Test" }] });
+        .send({ email: "t@t.com", phone: "07123456789", participants: [{ name: "Test" }] });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("Enrollment is closed");
@@ -187,7 +191,7 @@ describe("Course Controller", () => {
 
       const res = await request(app)
         .post("/api/courses/c1/enroll")
-        .send({ email: "t@t.com", participants: [{ name: "Test" }] });
+        .send({ email: "t@t.com", phone: "07123456789", participants: [{ name: "Test" }] });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("You are already enrolled in this course");
@@ -205,7 +209,7 @@ describe("Course Controller", () => {
 
       const res = await request(app)
         .post("/api/courses/c1/enroll")
-        .send({ email: "t@t.com", participants: [{ name: "Test" }] });
+        .send({ email: "t@t.com", phone: "07123456789", participants: [{ name: "Test" }] });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toMatch(/spots remaining/);

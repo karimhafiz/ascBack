@@ -5,6 +5,7 @@ const courseEnrollmentSchema = new mongoose.Schema(
     courseId: { type: mongoose.Schema.Types.ObjectId, ref: "Course", required: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     buyerEmail: { type: String, required: true },
+    buyerPhone: { type: String, required: true },
     buyerName: { type: String },
     paymentId: { type: String },
     pendingSessionId: { type: String },
@@ -16,7 +17,7 @@ const courseEnrollmentSchema = new mongoose.Schema(
     subscriptionId: { type: String },
     subscriptionStatus: {
       type: String,
-      enum: ["active", "cancelled", "past_due", null],
+      enum: ["active", "trialing", "cancelled", "past_due", null],
       default: null,
     },
     currentPeriodEnd: { type: Date },
