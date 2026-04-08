@@ -1,5 +1,6 @@
 const request = require("supertest");
 const express = require("express");
+const mongoose = require("mongoose");
 
 // Mock models before requiring the route
 jest.mock("../../models/Ticket");
@@ -23,6 +24,10 @@ const Ticket = require("../../models/Ticket");
 const Event = require("../../models/Event");
 const ticketRoutes = require("../../routes/tickets");
 
+// Reusable valid ObjectIds
+const validEventId = new mongoose.Types.ObjectId().toString();
+const validTicketId = new mongoose.Types.ObjectId().toString();
+
 describe("Ticket Routes — Integration", () => {
   let app;
 
@@ -39,15 +44,15 @@ describe("Ticket Routes — Integration", () => {
   describe("POST /api/tickets", () => {
     it("should buy a ticket and decrement available count", async () => {
       const mockEvent = {
-        _id: "event1",
+        _id: validEventId,
         ticketsAvailable: 10,
         save: jest.fn().mockResolvedValue(true),
       };
       Event.findById.mockResolvedValue(mockEvent);
 
       const mockTicket = {
-        _id: "ticket1",
-        eventId: "event1",
+        _id: validTicketId,
+        eventId: validEventId,
         buyerEmail: "buyer@test.com",
         user: "user123",
         status: "pending",
@@ -62,35 +67,52 @@ describe("Ticket Routes — Integration", () => {
 
       const res = await request(app)
         .post("/api/tickets")
-        .send({ eventId: "event1", buyerEmail: "buyer@test.com" });
+        .send({ eventId: validEventId, buyerEmail: "buyer@test.com" });
 
       expect(res.status).toBe(201);
       expect(Event.findOneAndUpdate).toHaveBeenCalledWith(
-        { _id: "event1", ticketsAvailable: { $gt: 0 } },
+        { _id: validEventId, ticketsAvailable: { $gt: 0 } },
         { $inc: { ticketsAvailable: -1 } }
       );
     });
 
     it("should return 404 if event not found", async () => {
+      const nonexistentId = new mongoose.Types.ObjectId().toString();
       Event.findById.mockResolvedValue(null);
 
       const res = await request(app)
         .post("/api/tickets")
-        .send({ eventId: "nope", buyerEmail: "buyer@test.com" });
+        .send({ eventId: nonexistentId, buyerEmail: "buyer@test.com" });
 
       expect(res.status).toBe(404);
       expect(res.body.error).toBe("Event not found");
     });
 
     it("should return 400 if tickets sold out", async () => {
-      Event.findById.mockResolvedValue({ _id: "event1", ticketsAvailable: 0 });
+      Event.findById.mockResolvedValue({ _id: validEventId, ticketsAvailable: 0 });
 
       const res = await request(app)
         .post("/api/tickets")
-        .send({ eventId: "event1", buyerEmail: "buyer@test.com" });
+        .send({ eventId: validEventId, buyerEmail: "buyer@test.com" });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("Tickets sold out");
+    });
+
+    it("should return 400 if eventId is missing", async () => {
+      const res = await request(app).post("/api/tickets").send({ buyerEmail: "buyer@test.com" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("eventId is required");
+    });
+
+    it("should return 400 if eventId is invalid", async () => {
+      const res = await request(app)
+        .post("/api/tickets")
+        .send({ eventId: "not-valid", buyerEmail: "buyer@test.com" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid event ID");
     });
   });
 
@@ -140,7 +162,7 @@ describe("Ticket Routes — Integration", () => {
   describe("GET /api/tickets/verify/:ticketCode", () => {
     it("should return ticket details", async () => {
       const mockTicket = {
-        _id: "t1",
+        _id: validTicketId,
         ticketCode: "TKT-ABC123",
         buyerEmail: "buyer@test.com",
         checkedIn: false,
@@ -167,7 +189,7 @@ describe("Ticket Routes — Integration", () => {
       const res = await request(app).get("/api/tickets/verify/TKT-NOPE");
 
       expect(res.status).toBe(404);
-      expect(res.body.message).toBe("Ticket not found");
+      expect(res.body.error).toBe("Ticket not found");
     });
   });
 
@@ -176,7 +198,7 @@ describe("Ticket Routes — Integration", () => {
   describe("POST /api/tickets/verify/:ticketCode/checkin", () => {
     it("should check in a ticket for the first time", async () => {
       const mockTicket = {
-        _id: "t1",
+        _id: validTicketId,
         ticketCode: "TKT-ABC123",
         checkedIn: false,
         checkedInAt: null,
@@ -205,7 +227,7 @@ describe("Ticket Routes — Integration", () => {
     it("should not update checkedInAt on second check-in (idempotent)", async () => {
       const originalTime = new Date("2025-01-01T10:00:00Z");
       const mockTicket = {
-        _id: "t1",
+        _id: validTicketId,
         ticketCode: "TKT-ABC123",
         checkedIn: true,
         checkedInAt: originalTime,
@@ -237,7 +259,7 @@ describe("Ticket Routes — Integration", () => {
       const res = await request(app).post("/api/tickets/verify/TKT-NOPE/checkin");
 
       expect(res.status).toBe(404);
-      expect(res.body.message).toBe("Ticket not found");
+      expect(res.body.error).toBe("Ticket not found");
     });
   });
 
@@ -247,7 +269,7 @@ describe("Ticket Routes — Integration", () => {
     it("should return tickets for owner", async () => {
       const mockTickets = [
         {
-          _id: "t1",
+          _id: validTicketId,
           buyerEmail: "buyer@test.com",
           user: { _id: "user123" },
           paymentId: "cs_123",
@@ -270,7 +292,7 @@ describe("Ticket Routes — Integration", () => {
     it("should allow staff access even if not owner", async () => {
       const mockTickets = [
         {
-          _id: "t1",
+          _id: validTicketId,
           buyerEmail: "other@test.com",
           user: { _id: "otherUser" },
           paymentId: "cs_123",
@@ -293,7 +315,7 @@ describe("Ticket Routes — Integration", () => {
     it("should return 403 for non-owner non-staff", async () => {
       const mockTickets = [
         {
-          _id: "t1",
+          _id: validTicketId,
           buyerEmail: "other@test.com",
           user: { _id: { toString: () => "otherUser" } },
           paymentId: "cs_123",
@@ -311,7 +333,7 @@ describe("Ticket Routes — Integration", () => {
         .set("x-test-user-id", "intruder");
 
       expect(res.status).toBe(403);
-      expect(res.body.message).toBe("Access denied");
+      expect(res.body.error).toBe("Access denied");
     });
 
     it("should return 404 if no tickets for payment", async () => {
@@ -332,7 +354,7 @@ describe("Ticket Routes — Integration", () => {
   describe("GET /api/tickets/:id", () => {
     it("should return ticket for owner", async () => {
       const mockTicket = {
-        _id: "t1",
+        _id: validTicketId,
         buyerEmail: "buyer@test.com",
         user: { _id: { toString: () => "user123" } },
       };
@@ -342,26 +364,27 @@ describe("Ticket Routes — Integration", () => {
         }),
       });
 
-      const res = await request(app).get("/api/tickets/t1");
+      const res = await request(app).get(`/api/tickets/${validTicketId}`);
 
       expect(res.status).toBe(200);
     });
 
     it("should return 404 if ticket not found", async () => {
+      const nonexistentId = new mongoose.Types.ObjectId().toString();
       Ticket.findById.mockReturnValue({
         populate: jest.fn().mockReturnValue({
           populate: jest.fn().mockResolvedValue(null),
         }),
       });
 
-      const res = await request(app).get("/api/tickets/nope");
+      const res = await request(app).get(`/api/tickets/${nonexistentId}`);
 
       expect(res.status).toBe(404);
     });
 
     it("should return 403 for non-owner", async () => {
       const mockTicket = {
-        _id: "t1",
+        _id: validTicketId,
         buyerEmail: "other@test.com",
         user: { _id: { toString: () => "otherUser" } },
       };
@@ -372,11 +395,18 @@ describe("Ticket Routes — Integration", () => {
       });
 
       const res = await request(app)
-        .get("/api/tickets/t1")
+        .get(`/api/tickets/${validTicketId}`)
         .set("x-test-user-email", "intruder@test.com")
         .set("x-test-user-id", "intruder");
 
       expect(res.status).toBe(403);
+    });
+
+    it("should return 400 for invalid ObjectId", async () => {
+      const res = await request(app).get("/api/tickets/not-valid");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid ticket ID");
     });
   });
 });

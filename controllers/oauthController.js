@@ -16,7 +16,7 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 exports.googleLogin = async (req, res) => {
   const { tokenId } = req.body;
   if (!tokenId) {
-    return res.status(400).json({ message: "tokenId is required" });
+    return res.status(400).json({ error: "tokenId is required" });
   }
 
   try {
@@ -28,7 +28,7 @@ exports.googleLogin = async (req, res) => {
     const { email, name, sub: googleId, picture } = payload;
 
     if (!email) {
-      return res.status(400).json({ message: "Google token did not contain an email" });
+      return res.status(400).json({ error: "Google token did not contain an email" });
     }
 
     // find or create the user
@@ -43,7 +43,7 @@ exports.googleLogin = async (req, res) => {
       await user.save();
     }
 
-    if (user.isBanned) return res.status(403).json({ message: "Account suspended." });
+    if (user.isBanned) return res.status(403).json({ error: "Account suspended." });
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken();
@@ -60,6 +60,6 @@ exports.googleLogin = async (req, res) => {
     });
   } catch (err) {
     console.error("Google login error", err);
-    res.status(500).json({ message: "Failed to verify Google token" });
+    res.status(500).json({ error: "Failed to verify Google token" });
   }
 };

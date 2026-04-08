@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Ticket = require("../models/Ticket");
 const Event = require("../models/Event");
 const { isStaff, isTicketOwner } = require("../utils/authUtils");
@@ -6,6 +7,17 @@ const { isStaff, isTicketOwner } = require("../utils/authUtils");
 exports.buyTicket = async (req, res) => {
   try {
     const { eventId, buyerEmail } = req.body;
+
+    if (!eventId) {
+      return res.status(400).json({ error: "eventId is required" });
+    }
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+      return res.status(400).json({ error: "Invalid event ID" });
+    }
+    if (!buyerEmail || !buyerEmail.trim()) {
+      return res.status(400).json({ error: "buyerEmail is required" });
+    }
+
     const userId = req.user ? req.user.id : null;
 
     const event = await Event.findById(eventId);
@@ -16,7 +28,12 @@ exports.buyTicket = async (req, res) => {
       return res.status(400).json({ error: "Tickets sold out" });
     }
 
-    const ticket = new Ticket({ eventId, buyerEmail, user: userId, status: "paid" });
+    const ticket = new Ticket({
+      eventId,
+      buyerEmail: buyerEmail.trim(),
+      user: userId,
+      status: "paid",
+    });
     await ticket.save();
 
     await Event.findOneAndUpdate(
@@ -89,16 +106,16 @@ exports.getTicketsByPayment = async (req, res) => {
       )
       .populate("user", "name email");
 
-    if (!tickets.length) return res.status(404).json({ message: "No tickets found" });
+    if (!tickets.length) return res.status(404).json({ error: "No tickets found" });
 
     if (!isTicketOwner(req.user, tickets[0]) && !isStaff(req.user)) {
-      return res.status(403).json({ message: "Access denied" });
+      return res.status(403).json({ error: "Access denied" });
     }
 
     res.json(tickets);
   } catch (err) {
     console.error("Error fetching tickets by payment:", err);
-    res.status(500).json({ message: "Failed to fetch tickets" });
+    res.status(500).json({ error: "Failed to fetch tickets" });
   }
 };
 
@@ -109,11 +126,11 @@ exports.verifyTicket = async (req, res) => {
       .populate("eventId", "title date openingTime street city images")
       .populate("user", "name email");
 
-    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+    if (!ticket) return res.status(404).json({ error: "Ticket not found" });
     res.json(ticket);
   } catch (err) {
     console.error("Error verifying ticket:", err);
-    res.status(500).json({ message: "Failed to verify ticket" });
+    res.status(500).json({ error: "Failed to verify ticket" });
   }
 };
 
@@ -121,7 +138,7 @@ exports.verifyTicket = async (req, res) => {
 exports.checkInTicket = async (req, res) => {
   try {
     const ticket = await Ticket.findOne({ ticketCode: req.params.ticketCode });
-    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+    if (!ticket) return res.status(404).json({ error: "Ticket not found" });
 
     const wasAlreadyCheckedIn = ticket.checkedIn;
     const originalCheckedInAt = ticket.checkedInAt;
@@ -142,7 +159,7 @@ exports.checkInTicket = async (req, res) => {
     res.json(response);
   } catch (err) {
     console.error("Error checking in ticket:", err);
-    res.status(500).json({ message: "Failed to check in ticket" });
+    res.status(500).json({ error: "Failed to check in ticket" });
   }
 };
 
@@ -151,6 +168,11 @@ exports.getTicketById = async (req, res) => {
   try {
     const param = req.params.id;
     const isTicketCode = /^TKT-[A-Z2-9]{6}$/.test(param);
+
+    if (!isTicketCode && !mongoose.Types.ObjectId.isValid(param)) {
+      return res.status(400).json({ error: "Invalid ticket ID" });
+    }
+
     const query = isTicketCode ? Ticket.findOne({ ticketCode: param }) : Ticket.findById(param);
     const ticket = await query
       .populate(
@@ -159,15 +181,15 @@ exports.getTicketById = async (req, res) => {
       )
       .populate("user", "name email");
 
-    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+    if (!ticket) return res.status(404).json({ error: "Ticket not found" });
 
     if (!isTicketOwner(req.user, ticket) && !isStaff(req.user)) {
-      return res.status(403).json({ message: "Access denied" });
+      return res.status(403).json({ error: "Access denied" });
     }
 
     res.json(ticket);
   } catch (err) {
     console.error("Error fetching ticket:", err);
-    res.status(500).json({ message: "Failed to fetch ticket" });
+    res.status(500).json({ error: "Failed to fetch ticket" });
   }
 };

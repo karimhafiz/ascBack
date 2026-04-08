@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const Ticket = require("../models/Ticket");
 const Event = require("../models/Event");
@@ -6,11 +7,19 @@ const { sendTicketConfirmationEmail } = require("../utils/emailUtils");
 
 // POST /payments/create-checkout-session
 exports.createCheckoutSession = async (req, res) => {
-  const { eventId, quantity } = req.body;
+  const { eventId, quantity: rawQuantity } = req.body;
   const email = req.user.email;
 
-  if (!eventId || !quantity) {
-    return res.status(400).json({ error: "eventId and quantity are required" });
+  if (!eventId) {
+    return res.status(400).json({ error: "eventId is required" });
+  }
+  if (!mongoose.Types.ObjectId.isValid(eventId)) {
+    return res.status(400).json({ error: "Invalid event ID" });
+  }
+
+  const quantity = Number(rawQuantity);
+  if (!Number.isInteger(quantity) || quantity < 1) {
+    return res.status(400).json({ error: "quantity must be a positive integer" });
   }
 
   try {
@@ -80,6 +89,9 @@ exports.handleSuccess = async (req, res) => {
 
     const { email, quantity, eventId } = session.metadata;
     const qty = parseInt(quantity, 10);
+    if (!Number.isInteger(qty) || qty < 1) {
+      return res.status(400).json({ error: "Invalid quantity in session metadata" });
+    }
     const amountPaid = session.amount_total / 100;
 
     const user = await User.findOne({ email });

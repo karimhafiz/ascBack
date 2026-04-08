@@ -1,5 +1,6 @@
 const request = require("supertest");
 const express = require("express");
+const mongoose = require("mongoose");
 const courseController = require("../../controllers/courseController");
 
 jest.mock("../../models/Course");
@@ -36,6 +37,11 @@ const Course = require("../../models/Course");
 const CourseEnrollment = require("../../models/CourseEnrollment");
 const User = require("../../models/User");
 
+// Reusable valid ObjectIds
+const validCourseId = new mongoose.Types.ObjectId().toString();
+const validEnrollmentId = new mongoose.Types.ObjectId().toString();
+const validUserId = new mongoose.Types.ObjectId().toString();
+
 describe("Course Controller", () => {
   let app;
 
@@ -45,7 +51,7 @@ describe("Course Controller", () => {
     app.use(express.json());
 
     app.use((req, res, next) => {
-      req.user = { id: "user1", email: "user@test.com", role: "admin" };
+      req.user = { id: validUserId, email: "user@test.com", role: "admin" };
       next();
     });
 
@@ -73,18 +79,25 @@ describe("Course Controller", () => {
 
   describe("GET /courses/:id", () => {
     it("should return a course", async () => {
-      Course.findById.mockResolvedValue({ _id: "c1", title: "English" });
+      Course.findById.mockResolvedValue({ _id: validCourseId, title: "English" });
 
-      const res = await request(app).get("/api/courses/c1");
+      const res = await request(app).get(`/api/courses/${validCourseId}`);
       expect(res.status).toBe(200);
       expect(res.body.title).toBe("English");
     });
 
     it("should return 404 if not found", async () => {
+      const nonexistentId = new mongoose.Types.ObjectId().toString();
       Course.findById.mockResolvedValue(null);
 
-      const res = await request(app).get("/api/courses/nope");
+      const res = await request(app).get(`/api/courses/${nonexistentId}`);
       expect(res.status).toBe(404);
+    });
+
+    it("should return 400 for invalid ObjectId", async () => {
+      const res = await request(app).get("/api/courses/not-valid");
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid course ID");
     });
   });
 
@@ -107,22 +120,29 @@ describe("Course Controller", () => {
       const res = await request(app).post("/api/courses").send({});
       expect(res.status).toBe(400);
     });
+
+    it("should return 400 if courseData is invalid JSON", async () => {
+      const res = await request(app).post("/api/courses").send({ courseData: "not-json" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid JSON in courseData");
+    });
   });
 
   describe("DELETE /courses/:id", () => {
     it("should delete a course", async () => {
-      Course.findById.mockResolvedValue({ _id: "c1", images: [] });
+      Course.findById.mockResolvedValue({ _id: validCourseId, images: [] });
       Course.findByIdAndDelete.mockResolvedValue(true);
 
-      const res = await request(app).delete("/api/courses/c1");
+      const res = await request(app).delete(`/api/courses/${validCourseId}`);
       expect(res.status).toBe(200);
       expect(res.body.message).toBe("Course deleted");
     });
 
     it("should return 404 if course not found", async () => {
+      const nonexistentId = new mongoose.Types.ObjectId().toString();
       Course.findById.mockResolvedValue(null);
 
-      const res = await request(app).delete("/api/courses/nope");
+      const res = await request(app).delete(`/api/courses/${nonexistentId}`);
       expect(res.status).toBe(404);
     });
   });
@@ -130,14 +150,14 @@ describe("Course Controller", () => {
   describe("POST /courses/:courseId/enroll", () => {
     it("should enroll in a free course directly", async () => {
       Course.findById.mockResolvedValue({
-        _id: "c1",
+        _id: validCourseId,
         price: 0,
         enrollmentOpen: true,
         maxEnrollment: 30,
         currentEnrollment: 5,
       });
       CourseEnrollment.findOne.mockResolvedValue(null);
-      User.findOne.mockResolvedValue({ _id: "u1" });
+      User.findOne.mockResolvedValue({ _id: validUserId });
       CourseEnrollment.mockImplementation(function (data) {
         Object.assign(this, data);
         this.save = jest.fn().mockResolvedValue(true);
@@ -145,7 +165,7 @@ describe("Course Controller", () => {
       Course.findByIdAndUpdate.mockResolvedValue(true);
 
       const res = await request(app)
-        .post("/api/courses/c1/enroll")
+        .post(`/api/courses/${validCourseId}/enroll`)
         .send({
           email: "t@t.com",
           phone: "07123456789",
@@ -158,7 +178,7 @@ describe("Course Controller", () => {
 
     it("should return 400 if no participants", async () => {
       const res = await request(app)
-        .post("/api/courses/c1/enroll")
+        .post(`/api/courses/${validCourseId}/enroll`)
         .send({ email: "t@t.com", phone: "07123456789", participants: [] });
 
       expect(res.status).toBe(400);
@@ -166,13 +186,13 @@ describe("Course Controller", () => {
 
     it("should return 400 if enrollment closed", async () => {
       Course.findById.mockResolvedValue({
-        _id: "c1",
+        _id: validCourseId,
         price: 10,
         enrollmentOpen: false,
       });
 
       const res = await request(app)
-        .post("/api/courses/c1/enroll")
+        .post(`/api/courses/${validCourseId}/enroll`)
         .send({ email: "t@t.com", phone: "07123456789", participants: [{ name: "Test" }] });
 
       expect(res.status).toBe(400);
@@ -181,7 +201,7 @@ describe("Course Controller", () => {
 
     it("should return 400 if already enrolled", async () => {
       Course.findById.mockResolvedValue({
-        _id: "c1",
+        _id: validCourseId,
         price: 10,
         enrollmentOpen: true,
         maxEnrollment: 30,
@@ -190,7 +210,7 @@ describe("Course Controller", () => {
       CourseEnrollment.findOne.mockResolvedValue({ status: "paid" });
 
       const res = await request(app)
-        .post("/api/courses/c1/enroll")
+        .post(`/api/courses/${validCourseId}/enroll`)
         .send({ email: "t@t.com", phone: "07123456789", participants: [{ name: "Test" }] });
 
       expect(res.status).toBe(400);
@@ -199,7 +219,7 @@ describe("Course Controller", () => {
 
     it("should return 400 if not enough spots", async () => {
       Course.findById.mockResolvedValue({
-        _id: "c1",
+        _id: validCourseId,
         price: 10,
         enrollmentOpen: true,
         maxEnrollment: 5,
@@ -208,7 +228,7 @@ describe("Course Controller", () => {
       CourseEnrollment.findOne.mockResolvedValue(null);
 
       const res = await request(app)
-        .post("/api/courses/c1/enroll")
+        .post(`/api/courses/${validCourseId}/enroll`)
         .send({ email: "t@t.com", phone: "07123456789", participants: [{ name: "Test" }] });
 
       expect(res.status).toBe(400);
@@ -219,7 +239,7 @@ describe("Course Controller", () => {
   describe("POST /enrollments/:enrollmentId/cancel", () => {
     it("should cancel a subscription", async () => {
       CourseEnrollment.findById.mockResolvedValue({
-        _id: "e1",
+        _id: validEnrollmentId,
         buyerEmail: "user@test.com",
         subscriptionId: "sub_123",
         subscriptionStatus: "active",
@@ -227,39 +247,40 @@ describe("Course Controller", () => {
       });
       CourseEnrollment.findByIdAndUpdate.mockResolvedValue(true);
 
-      const res = await request(app).post("/api/courses/enrollments/e1/cancel");
+      const res = await request(app).post(`/api/courses/enrollments/${validEnrollmentId}/cancel`);
       expect(res.status).toBe(200);
       expect(res.body.message).toMatch(/cancelled/i);
     });
 
     it("should return 404 if enrollment not found", async () => {
+      const nonexistentId = new mongoose.Types.ObjectId().toString();
       CourseEnrollment.findById.mockResolvedValue(null);
 
-      const res = await request(app).post("/api/courses/enrollments/nope/cancel");
+      const res = await request(app).post(`/api/courses/enrollments/${nonexistentId}/cancel`);
       expect(res.status).toBe(404);
     });
 
     it("should return 400 if not a subscription", async () => {
       CourseEnrollment.findById.mockResolvedValue({
-        _id: "e1",
+        _id: validEnrollmentId,
         buyerEmail: "user@test.com",
         subscriptionId: null,
       });
 
-      const res = await request(app).post("/api/courses/enrollments/e1/cancel");
+      const res = await request(app).post(`/api/courses/enrollments/${validEnrollmentId}/cancel`);
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("This enrollment is not a subscription");
     });
 
     it("should return 400 if already cancelled", async () => {
       CourseEnrollment.findById.mockResolvedValue({
-        _id: "e1",
+        _id: validEnrollmentId,
         buyerEmail: "user@test.com",
         subscriptionId: "sub_123",
         subscriptionStatus: "cancelled",
       });
 
-      const res = await request(app).post("/api/courses/enrollments/e1/cancel");
+      const res = await request(app).post(`/api/courses/enrollments/${validEnrollmentId}/cancel`);
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("Subscription is already cancelled");
     });
@@ -278,13 +299,13 @@ describe("Course Controller", () => {
       );
 
       CourseEnrollment.findById.mockResolvedValue({
-        _id: "e1",
+        _id: validEnrollmentId,
         buyerEmail: "owner@test.com",
         subscriptionId: "sub_123",
         subscriptionStatus: "active",
       });
 
-      const res = await request(app).post("/api/courses/enrollments/e1/cancel");
+      const res = await request(app).post(`/api/courses/enrollments/${validEnrollmentId}/cancel`);
       expect(res.status).toBe(403);
     });
   });
@@ -295,7 +316,7 @@ describe("Course Controller", () => {
         populate: jest.fn().mockResolvedValue([{ buyerEmail: "t@t.com" }]),
       });
 
-      const res = await request(app).get("/api/courses/c1/enrollments");
+      const res = await request(app).get(`/api/courses/${validCourseId}/enrollments`);
       expect(res.status).toBe(200);
       expect(res.body).toHaveLength(1);
     });

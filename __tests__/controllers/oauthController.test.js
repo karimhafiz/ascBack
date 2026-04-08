@@ -48,7 +48,7 @@ describe("OAuth Controller - googleLogin", () => {
   it("should return 400 when tokenId is missing", async () => {
     const response = await request(app).post("/api/auth/google").send({});
     expect(response.status).toBe(400);
-    expect(response.body.message).toBe("tokenId is required");
+    expect(response.body.error).toBe("tokenId is required");
   });
 
   it("should verify a Google token and return an access token for a new user", async () => {
@@ -129,6 +129,6 @@ describe("OAuth Controller - googleLogin", () => {
     const response = await request(app).post("/api/auth/google").send({ tokenId: "bad-token" });
 
     expect(response.status).toBe(500);
-    expect(response.body.message).toBe("Failed to verify Google token");
+    expect(response.body.error).toBe("Failed to verify Google token");
   });
 });

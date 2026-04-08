@@ -1,5 +1,6 @@
 const request = require("supertest");
 const express = require("express");
+const mongoose = require("mongoose");
 const eventController = require("../../controllers/eventController");
 
 // Mock dependencies
@@ -10,6 +11,10 @@ jest.mock("../../utils/cloudinaryUtils", () => ({
 }));
 
 const Event = require("../../models/Event");
+
+// Reusable valid ObjectIds
+const validEventId = new mongoose.Types.ObjectId().toString();
+const validUserId = new mongoose.Types.ObjectId().toString();
 
 describe("Event Controller", () => {
   let app;
@@ -22,7 +27,7 @@ describe("Event Controller", () => {
 
     // Attach a fake user for authenticated routes
     app.use((req, res, next) => {
-      req.user = { id: "testUserId", role: "admin" };
+      req.user = { id: validUserId, role: "admin" };
       next();
     });
 
@@ -60,22 +65,30 @@ describe("Event Controller", () => {
 
   describe("GET /api/events/:id", () => {
     it("should fetch a single event by ID", async () => {
-      const mockEvent = { _id: "1", title: "Football" };
+      const mockEvent = { _id: validEventId, title: "Football" };
       Event.findById.mockResolvedValue(mockEvent);
 
-      const response = await request(app).get("/api/events/1");
+      const response = await request(app).get(`/api/events/${validEventId}`);
 
       expect(response.status).toBe(200);
       expect(response.body.title).toBe("Football");
     });
 
     it("should return 404 if event not found", async () => {
+      const nonexistentId = new mongoose.Types.ObjectId().toString();
       Event.findById.mockResolvedValue(null);
 
-      const response = await request(app).get("/api/events/nonexistent");
+      const response = await request(app).get(`/api/events/${nonexistentId}`);
 
       expect(response.status).toBe(404);
       expect(response.body.error).toBe("Event not found");
+    });
+
+    it("should return 400 for invalid ObjectId", async () => {
+      const response = await request(app).get("/api/events/not-valid");
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe("Invalid event ID");
     });
   });
 
@@ -96,7 +109,7 @@ describe("Event Controller", () => {
         _id: "new1",
         ...eventData,
         images: [],
-        createdBy: "testUserId",
+        createdBy: validUserId,
       };
       Event.mockImplementation(function (data) {
         Object.assign(this, data);
@@ -129,21 +142,22 @@ describe("Event Controller", () => {
 
   describe("DELETE /api/events/:id", () => {
     it("should delete an event", async () => {
-      const mockEvent = { _id: "1", title: "Football", images: [] };
+      const mockEvent = { _id: validEventId, title: "Football", images: [] };
       Event.findById.mockResolvedValue(mockEvent);
       Event.findByIdAndDelete.mockResolvedValue(mockEvent);
 
-      const response = await request(app).delete("/api/events/1");
+      const response = await request(app).delete(`/api/events/${validEventId}`);
 
       expect(response.status).toBe(200);
       expect(response.body.message).toBe("Event deleted successfully");
-      expect(Event.findByIdAndDelete).toHaveBeenCalledWith("1");
+      expect(Event.findByIdAndDelete).toHaveBeenCalledWith(validEventId);
     });
 
     it("should return 404 if event to delete is not found", async () => {
+      const nonexistentId = new mongoose.Types.ObjectId().toString();
       Event.findById.mockResolvedValue(null);
 
-      const response = await request(app).delete("/api/events/nonexistent");
+      const response = await request(app).delete(`/api/events/${nonexistentId}`);
 
       expect(response.status).toBe(404);
       expect(response.body.error).toBe("Event not found");
