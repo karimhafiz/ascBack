@@ -49,7 +49,8 @@ exports.resetPageContent = async (req, res) => {
 
     res.status(400).json({ error: "Unknown page" });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Error resetting page content:", error);
+    res.status(500).json({ error: "Failed to reset page content" });
   }
 };
 
@@ -63,7 +64,8 @@ exports.getPageContent = async (req, res) => {
     }
     res.json(content);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Error fetching page content:", error);
+    res.status(500).json({ error: "Failed to fetch page content" });
   }
 };
 
@@ -117,6 +119,6 @@ exports.updatePageContent = async (req, res) => {
     res.json({ message: "Page content updated", pageContent: content });
   } catch (error) {
     console.error("Error updating page content:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to update page content" });
   }
 };

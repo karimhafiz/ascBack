@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Event = require("../models/Event");
 const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
 
@@ -46,6 +47,10 @@ exports.getAllEvents = async (req, res) => {
 // Fetch a single event by ID
 exports.getEventById = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid event ID" });
+    }
+
     const event = await Event.findById(req.params.id);
     if (!event) {
       return res.status(404).json({ error: "Event not found" });
@@ -94,13 +99,17 @@ exports.createEvent = async (req, res) => {
 // Update an event
 exports.updateEvent = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid event ID" });
+    }
+
     let eventData;
     try {
       eventData = JSON.parse(req.body.eventData);
     } catch {
       return res.status(400).json({ error: "Invalid JSON in eventData" });
     }
-    console.log("req.params.id:", req.params.id);
+
     const event = await Event.findById(req.params.id);
     if (!event) {
       return res.status(404).json({ error: "Event not found" });
@@ -138,6 +147,10 @@ exports.updateEvent = async (req, res) => {
 // Delete an event
 exports.deleteEvent = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid event ID" });
+    }
+
     const event = await Event.findById(req.params.id);
     if (!event) {
       return res.status(404).json({ error: "Event not found" });

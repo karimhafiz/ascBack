@@ -16,10 +16,21 @@ const {
 exports.register = async (req, res) => {
   try {
     const { name, email, password } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "Name is required" });
+    }
+    if (!email || !email.trim()) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       if (existingUser.password) {
-        return res.status(400).json({ message: "Email already in use." });
+        return res.status(400).json({ error: "Email already in use." });
       }
       // Google-only user registering with password — add password to existing account
       existingUser.password = await bcrypt.hash(password, 10);
@@ -31,8 +42,8 @@ exports.register = async (req, res) => {
     }
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = new User({
-      name,
-      email,
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
       password: hashedPassword,
       authProvider: "local",
       role: "user",
@@ -40,28 +51,37 @@ exports.register = async (req, res) => {
     await user.save();
     res.status(201).json({ message: "User registered successfully" });
   } catch (err) {
-    res.status(500).json({ message: "Server error" });
+    console.error("Registration error:", err);
+    res.status(500).json({ error: "Server error" });
   }
 };
 
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
+
+    if (!email || !email.trim()) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+    if (!password) {
+      return res.status(400).json({ error: "Password is required" });
+    }
+
     const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ message: "Invalid credentials" });
+    if (!user) return res.status(400).json({ error: "Invalid credentials" });
 
     if (!user.password) {
       return res.status(400).json({
-        message:
+        error:
           "This account uses Google Sign-In. Please log in with Google or register with a password.",
         authMethod: "google",
       });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
+    if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
 
-    if (user.isBanned) return res.status(403).json({ message: "Account suspended." });
+    if (user.isBanned) return res.status(403).json({ error: "Account suspended." });
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken();
@@ -77,7 +97,8 @@ exports.login = async (req, res) => {
       user: { id: user._id, name: user.name, email: user.email, role: user.role },
     });
   } catch (err) {
-    res.status(500).json({ message: "Server error" });
+    console.error("Login error:", err);
+    res.status(500).json({ error: "Server error" });
   }
 };
 
@@ -85,25 +106,25 @@ exports.refresh = async (req, res) => {
   try {
     const { refreshToken } = req.cookies;
     if (!refreshToken) {
-      return res.status(401).json({ message: "No refresh token" });
+      return res.status(401).json({ error: "No refresh token" });
     }
 
     const hashedToken = hashToken(refreshToken);
     const user = await User.findOne({ refreshToken: hashedToken });
     if (!user) {
       clearRefreshTokenCookie(res);
-      return res.status(403).json({ message: "Invalid refresh token" });
+      return res.status(403).json({ error: "Invalid refresh token" });
     }
 
     if (!user.refreshTokenExpiresAt || user.refreshTokenExpiresAt < new Date()) {
       clearRefreshTokenCookie(res);
       await User.findByIdAndUpdate(user._id, { refreshToken: null, refreshTokenExpiresAt: null });
-      return res.status(403).json({ message: "Refresh token expired" });
+      return res.status(403).json({ error: "Refresh token expired" });
     }
 
     if (user.isBanned) {
       clearRefreshTokenCookie(res);
-      return res.status(403).json({ message: "Account suspended." });
+      return res.status(403).json({ error: "Account suspended." });
     }
 
     const accessToken = generateAccessToken(user);
@@ -112,7 +133,8 @@ exports.refresh = async (req, res) => {
       user: { id: user._id, name: user.name, email: user.email, role: user.role },
     });
   } catch (err) {
-    res.status(500).json({ message: "Server error" });
+    console.error("Refresh error:", err);
+    res.status(500).json({ error: "Server error" });
   }
 };
 
@@ -128,14 +150,15 @@ exports.logout = async (req, res) => {
     clearRefreshTokenCookie(res);
     res.json({ message: "Logged out successfully" });
   } catch (err) {
-    res.status(500).json({ message: "Server error" });
+    console.error("Logout error:", err);
+    res.status(500).json({ error: "Server error" });
   }
 };
 
 exports.getProfile = async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password -refreshToken");
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) return res.status(404).json({ error: "User not found" });
 
     const tickets = await Ticket.find({ buyerEmail: user.email, status: "paid" })
       .populate("eventId", "title date location ticketPrice image images city street postCode")
@@ -182,6 +205,6 @@ exports.getProfile = async (req, res) => {
     });
   } catch (err) {
     console.error("Profile fetch error:", err);
-    res.status(500).json({ message: "Failed to load profile" });
+    res.status(500).json({ error: "Failed to load profile" });
   }
 };

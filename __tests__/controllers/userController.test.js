@@ -94,7 +94,7 @@ describe("User Controller", () => {
         .send({ name: "Test", email: "test@example.com", password: "password123" });
 
       expect(response.status).toBe(400);
-      expect(response.body.message).toBe("Email already in use.");
+      expect(response.body.error).toBe("Email already in use.");
     });
 
     it("should add password to existing Google-only account", async () => {
@@ -148,7 +148,7 @@ describe("User Controller", () => {
         .send({ email: "noone@example.com", password: "password123" });
 
       expect(response.status).toBe(400);
-      expect(response.body.message).toBe("Invalid credentials");
+      expect(response.body.error).toBe("Invalid credentials");
     });
 
     it("should return 400 for wrong password", async () => {
@@ -165,7 +165,7 @@ describe("User Controller", () => {
         .send({ email: "test@example.com", password: "wrong" });
 
       expect(response.status).toBe(400);
-      expect(response.body.message).toBe("Invalid credentials");
+      expect(response.body.error).toBe("Invalid credentials");
     });
 
     it("should return 400 if user is a Google account", async () => {
@@ -212,7 +212,7 @@ describe("User Controller", () => {
       const response = await request(app).post("/api/users/refresh");
 
       expect(response.status).toBe(401);
-      expect(response.body.message).toBe("No refresh token");
+      expect(response.body.error).toBe("No refresh token");
     });
 
     it("should return 403 if refresh token is invalid", async () => {

@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Course = require("../models/Course");
 const CourseEnrollment = require("../models/CourseEnrollment");
 const User = require("../models/User");
@@ -51,8 +52,12 @@ exports.getAllCourses = async (req, res) => {
 
 exports.getCourseById = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid course ID" });
+    }
+
     const course = await Course.findById(req.params.id);
-    if (!course) return res.status(404).json({ message: "Course not found" });
+    if (!course) return res.status(404).json({ error: "Course not found" });
     res.json(course);
   } catch (err) {
     console.error("Error fetching course:", err);
@@ -63,17 +68,23 @@ exports.getCourseById = async (req, res) => {
 exports.createCourse = async (req, res) => {
   try {
     if (!req.body.courseData) return res.status(400).json({ error: "courseData is required" });
-    const data = JSON.parse(req.body.courseData);
+
+    let data;
+    try {
+      data = JSON.parse(req.body.courseData);
+    } catch {
+      return res.status(400).json({ error: "Invalid JSON in courseData" });
+    }
 
     const imageUrl = req.file ? req.file.secure_url || req.file.path : null;
+    data.featured = data.featured === true || data.featured === "true";
+    data.enrollmentOpen = data.enrollmentOpen !== false && data.enrollmentOpen !== "false";
     const sanitized = sanitize(data);
 
     const course = new Course({
       ...sanitized,
       images: imageUrl ? [imageUrl] : [],
       createdBy: req.user.id,
-      featured: data.featured === true || data.featured === "true",
-      enrollmentOpen: data.enrollmentOpen !== false && data.enrollmentOpen !== "false",
     });
 
     await course.save();
@@ -86,6 +97,10 @@ exports.createCourse = async (req, res) => {
 
 exports.updateCourse = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid course ID" });
+    }
+
     let data;
     try {
       data = JSON.parse(req.body.courseData);
@@ -93,7 +108,7 @@ exports.updateCourse = async (req, res) => {
       return res.status(400).json({ error: "Invalid JSON in courseData" });
     }
     const course = await Course.findById(req.params.id);
-    if (!course) return res.status(404).json({ message: "Course not found" });
+    if (!course) return res.status(404).json({ error: "Course not found" });
 
     let imagePath = null;
     if (req.file) {
@@ -103,6 +118,8 @@ exports.updateCourse = async (req, res) => {
       imagePath = req.file.secure_url || req.file.path;
     }
 
+    data.featured = data.featured === true || data.featured === "true";
+    data.enrollmentOpen = data.enrollmentOpen !== false && data.enrollmentOpen !== "false";
     const sanitized = sanitize(data);
 
     // If billing interval or price changed on a subscription course, invalidate
@@ -117,8 +134,6 @@ exports.updateCourse = async (req, res) => {
       req.params.id,
       {
         ...sanitized,
-        featured: data.featured === true || data.featured === "true",
-        enrollmentOpen: data.enrollmentOpen !== false && data.enrollmentOpen !== "false",
         images: imagePath ? [imagePath] : course.images,
         ...(resetStripe && { stripePriceId: null, stripeProductId: null }),
       },
@@ -133,8 +148,12 @@ exports.updateCourse = async (req, res) => {
 
 exports.deleteCourse = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid course ID" });
+    }
+
     const course = await Course.findById(req.params.id);
-    if (!course) return res.status(404).json({ message: "Course not found" });
+    if (!course) return res.status(404).json({ error: "Course not found" });
 
     for (const url of course.images || []) {
       await deleteCloudinaryImage(url, "course-images");
@@ -152,6 +171,10 @@ exports.deleteCourse = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exports.enrollInCourse = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.courseId)) {
+      return res.status(400).json({ error: "Invalid course ID" });
+    }
+
     const { participants = [], phone } = req.body;
     const email = req.user.email;
     if (!phone || !phone.trim()) {
@@ -224,6 +247,7 @@ exports.enrollInCourse = async (req, res) => {
         }
       }
 
+      // TRANSFER THIS LOGIC TO CREATE COURSE HANDLER
       if (!priceId) {
         const product = await stripe.products.create({
           name: course.title,
@@ -329,6 +353,11 @@ exports.enrollInCourse = async (req, res) => {
 exports.handleEnrollmentSuccess = async (req, res) => {
   const { courseId } = req.params;
   const { session_id } = req.query;
+
+  if (!session_id) {
+    return res.redirect(`${process.env.FRONT_END_URL}courses`);
+  }
+
   try {
     const session = await stripe.checkout.sessions.retrieve(session_id, {
       expand: ["subscription"],
@@ -448,6 +477,10 @@ exports.handleEnrollmentSuccess = async (req, res) => {
 
 exports.getCourseEnrollments = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.courseId)) {
+      return res.status(400).json({ error: "Invalid course ID" });
+    }
+
     const enrollments = await CourseEnrollment.find({ courseId: req.params.courseId }).populate(
       "user",
       "name email"
@@ -466,6 +499,10 @@ exports.getCourseEnrollments = async (req, res) => {
 exports.cancelSubscription = async (req, res) => {
   try {
     const { enrollmentId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(enrollmentId)) {
+      return res.status(400).json({ error: "Invalid enrollment ID" });
+    }
+
     const enrollment = await CourseEnrollment.findById(enrollmentId);
     if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
 
@@ -522,6 +559,10 @@ exports.cancelSubscription = async (req, res) => {
 exports.reactivateSubscription = async (req, res) => {
   try {
     const { enrollmentId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(enrollmentId)) {
+      return res.status(400).json({ error: "Invalid enrollment ID" });
+    }
+
     const enrollment = await CourseEnrollment.findById(enrollmentId);
     if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
 
@@ -647,6 +688,10 @@ exports.reactivateSubscription = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exports.getMyEnrollment = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.courseId)) {
+      return res.status(400).json({ error: "Invalid course ID" });
+    }
+
     const enrollment = await CourseEnrollment.findOne({
       courseId: req.params.courseId,
       buyerEmail: req.user.email,
@@ -686,6 +731,10 @@ exports.getMyEnrollment = async (req, res) => {
 exports.addParticipant = async (req, res) => {
   try {
     const { enrollmentId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(enrollmentId)) {
+      return res.status(400).json({ error: "Invalid enrollment ID" });
+    }
+
     const { name, age, email } = req.body;
 
     if (!name || !name.trim()) {
@@ -759,7 +808,12 @@ exports.addParticipant = async (req, res) => {
 exports.removeParticipant = async (req, res) => {
   try {
     const { enrollmentId } = req.params;
-    const { participantIndex } = req.body;
+    if (!mongoose.Types.ObjectId.isValid(enrollmentId)) {
+      return res.status(400).json({ error: "Invalid enrollment ID" });
+    }
+
+    const { participantIndex: rawIndex } = req.body;
+    const participantIndex = Number(rawIndex);
 
     const enrollment = await CourseEnrollment.findById(enrollmentId);
     if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
@@ -773,7 +827,8 @@ exports.removeParticipant = async (req, res) => {
     }
 
     if (
-      participantIndex == null ||
+      rawIndex == null ||
+      !Number.isInteger(participantIndex) ||
       participantIndex < 0 ||
       participantIndex >= enrollment.participants.length
     ) {

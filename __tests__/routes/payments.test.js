@@ -1,5 +1,6 @@
 const request = require("supertest");
 const express = require("express");
+const mongoose = require("mongoose");
 
 // Mock models
 jest.mock("../../models/Ticket");
@@ -28,6 +29,9 @@ const Event = require("../../models/Event");
 const User = require("../../models/User");
 const paymentRoutes = require("../../routes/payments");
 
+// Reusable valid ObjectIds
+const validEventId = new mongoose.Types.ObjectId().toString();
+
 describe("Payment Routes — Integration", () => {
   let app;
 
@@ -46,7 +50,7 @@ describe("Payment Routes — Integration", () => {
   describe("POST /api/payments/create-checkout-session", () => {
     it("should create a Stripe checkout session", async () => {
       Event.findById.mockResolvedValue({
-        _id: "event1",
+        _id: validEventId,
         title: "Football",
         shortDescription: "Practice",
         ticketPrice: 10,
@@ -59,7 +63,7 @@ describe("Payment Routes — Integration", () => {
 
       const res = await request(app)
         .post("/api/payments/create-checkout-session")
-        .send({ eventId: "event1", email: "buyer@test.com", quantity: 2 });
+        .send({ eventId: validEventId, email: "buyer@test.com", quantity: 2 });
 
       expect(res.status).toBe(200);
       expect(res.body.url).toBe("https://checkout.stripe.com/pay/cs_test_123");
@@ -80,7 +84,7 @@ describe("Payment Routes — Integration", () => {
             }),
           ],
           metadata: expect.objectContaining({
-            eventId: "event1",
+            eventId: validEventId,
             email: "buyer@test.com",
             quantity: "2",
           }),
@@ -88,21 +92,31 @@ describe("Payment Routes — Integration", () => {
       );
     });
 
-    it("should return 400 if required fields are missing", async () => {
+    it("should return 400 if eventId is missing", async () => {
       const res = await request(app)
         .post("/api/payments/create-checkout-session")
-        .send({ eventId: "event1" });
+        .send({ quantity: 1 });
 
       expect(res.status).toBe(400);
-      expect(res.body.error).toBe("eventId and quantity are required");
+      expect(res.body.error).toBe("eventId is required");
+    });
+
+    it("should return 400 if quantity is missing", async () => {
+      const res = await request(app)
+        .post("/api/payments/create-checkout-session")
+        .send({ eventId: validEventId });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("quantity must be a positive integer");
     });
 
     it("should return 404 if event not found", async () => {
+      const nonexistentId = new mongoose.Types.ObjectId().toString();
       Event.findById.mockResolvedValue(null);
 
       const res = await request(app)
         .post("/api/payments/create-checkout-session")
-        .send({ eventId: "nope", email: "b@test.com", quantity: 1 });
+        .send({ eventId: nonexistentId, email: "b@test.com", quantity: 1 });
 
       expect(res.status).toBe(404);
       expect(res.body.error).toBe("Event not found");
@@ -110,7 +124,7 @@ describe("Payment Routes — Integration", () => {
 
     it("should return 400 if not enough tickets available", async () => {
       Event.findById.mockResolvedValue({
-        _id: "event1",
+        _id: validEventId,
         title: "Football",
         ticketPrice: 10,
         ticketsAvailable: 1,
@@ -118,7 +132,7 @@ describe("Payment Routes — Integration", () => {
 
       const res = await request(app)
         .post("/api/payments/create-checkout-session")
-        .send({ eventId: "event1", email: "b@test.com", quantity: 5 });
+        .send({ eventId: validEventId, email: "b@test.com", quantity: 5 });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("Not enough tickets available");
@@ -126,7 +140,7 @@ describe("Payment Routes — Integration", () => {
 
     it("should return 500 if Stripe fails", async () => {
       Event.findById.mockResolvedValue({
-        _id: "event1",
+        _id: validEventId,
         title: "Football",
         ticketPrice: 10,
         ticketsAvailable: 50,
@@ -135,7 +149,7 @@ describe("Payment Routes — Integration", () => {
 
       const res = await request(app)
         .post("/api/payments/create-checkout-session")
-        .send({ eventId: "event1", email: "b@test.com", quantity: 1 });
+        .send({ eventId: validEventId, email: "b@test.com", quantity: 1 });
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Failed to create checkout session");
@@ -149,7 +163,7 @@ describe("Payment Routes — Integration", () => {
       mockStripe.checkout.sessions.retrieve.mockResolvedValue({
         id: "cs_test_123",
         payment_status: "paid",
-        metadata: { email: "buyer@test.com", quantity: "2", eventId: "event1" },
+        metadata: { email: "buyer@test.com", quantity: "2", eventId: validEventId },
         amount_total: 2000, // 20 GBP in pence
       });
 
@@ -171,7 +185,7 @@ describe("Payment Routes — Integration", () => {
 
       // Event lookup and update
       const mockEvent = {
-        _id: "event1",
+        _id: validEventId,
         ticketsAvailable: 50,
         totalRevenue: 100,
         save: jest.fn().mockResolvedValue(true),
@@ -180,7 +194,7 @@ describe("Payment Routes — Integration", () => {
 
       const res = await request(app)
         .get("/api/payments/success")
-        .query({ session_id: "cs_test_123", eventId: "event1" });
+        .query({ session_id: "cs_test_123", eventId: validEventId });
 
       // Should redirect to frontend confirmation
       expect(res.status).toBe(302);
@@ -195,11 +209,11 @@ describe("Payment Routes — Integration", () => {
 
       // Should update event revenue and ticket count atomically
       expect(Event.findOneAndUpdate).toHaveBeenCalledWith(
-        { _id: "event1" },
+        { _id: validEventId },
         { $inc: { totalRevenue: 20 } }
       );
       expect(Event.findOneAndUpdate).toHaveBeenCalledWith(
-        { _id: "event1", ticketsAvailable: { $gte: 2 } },
+        { _id: validEventId, ticketsAvailable: { $gte: 2 } },
         { $inc: { ticketsAvailable: -2 } }
       );
     });
@@ -217,7 +231,7 @@ describe("Payment Routes — Integration", () => {
 
       const res = await request(app)
         .get("/api/payments/success")
-        .query({ session_id: "cs_test_123", eventId: "event1" });
+        .query({ session_id: "cs_test_123", eventId: validEventId });
 
       expect(res.status).toBe(302);
       expect(res.headers.location).toMatch(/ticket_id=existing_ticket/);
@@ -227,7 +241,7 @@ describe("Payment Routes — Integration", () => {
     });
 
     it("should return 400 if session_id is missing", async () => {
-      const res = await request(app).get("/api/payments/success").query({ eventId: "event1" });
+      const res = await request(app).get("/api/payments/success").query({ eventId: validEventId });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("Missing session_id");
@@ -241,7 +255,7 @@ describe("Payment Routes — Integration", () => {
 
       const res = await request(app)
         .get("/api/payments/success")
-        .query({ session_id: "cs_test_123", eventId: "event1" });
+        .query({ session_id: "cs_test_123", eventId: validEventId });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("Payment not completed");
@@ -265,7 +279,7 @@ describe("Payment Routes — Integration", () => {
       });
 
       Event.findById.mockResolvedValue({
-        _id: "event1",
+        _id: validEventId,
         ticketsAvailable: 10,
         totalRevenue: 0,
         save: jest.fn().mockResolvedValue(true),
@@ -273,7 +287,7 @@ describe("Payment Routes — Integration", () => {
 
       const res = await request(app)
         .get("/api/payments/success")
-        .query({ session_id: "cs_test_456", eventId: "event1" });
+        .query({ session_id: "cs_test_456", eventId: validEventId });
 
       expect(res.status).toBe(302);
       // User should be null on the ticket
@@ -282,6 +296,7 @@ describe("Payment Routes — Integration", () => {
     });
 
     it("should handle event not found gracefully (still creates tickets)", async () => {
+      const goneEventId = new mongoose.Types.ObjectId().toString();
       mockStripe.checkout.sessions.retrieve.mockResolvedValue({
         id: "cs_test_789",
         payment_status: "paid",
@@ -302,7 +317,7 @@ describe("Payment Routes — Integration", () => {
 
       const res = await request(app)
         .get("/api/payments/success")
-        .query({ session_id: "cs_test_789", eventId: "event_gone" });
+        .query({ session_id: "cs_test_789", eventId: goneEventId });
 
       // Should still redirect (ticket was created)
       expect(res.status).toBe(302);
@@ -318,7 +333,7 @@ describe("Payment Routes — Integration", () => {
         amount_total: 2000,
         currency: "gbp",
         payment_status: "paid",
-        metadata: { eventId: "event1", quantity: "2" },
+        metadata: { eventId: validEventId, quantity: "2" },
       });
 
       const res = await request(app).get("/api/payments/session/cs_test_123");
@@ -329,7 +344,7 @@ describe("Payment Routes — Integration", () => {
         amountTotal: 20, // 2000 / 100
         currency: "gbp",
         paymentStatus: "paid",
-        eventId: "event1",
+        eventId: validEventId,
         quantity: "2",
       });
     });

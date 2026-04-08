@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Team = require("../models/Team");
 const Event = require("../models/Event");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
@@ -7,10 +8,15 @@ const { sendTeamRegistrationEmail, sendTeamUpdateEmail } = require("../utils/ema
 exports.getTeam = async (req, res) => {
   try {
     const { teamId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(teamId)) {
+      return res.status(400).json({ error: "Invalid team ID" });
+    }
+
     const team = await Team.findById(teamId);
     if (!team) return res.status(404).json({ error: "Team not found" });
     res.json({ team });
   } catch (error) {
+    console.error("Error fetching team:", error);
     res.status(500).json({ error: "Failed to fetch team" });
   }
 };
@@ -23,10 +29,23 @@ exports.signupTeam = async (req, res) => {
     const { name, members, manager } = req.body;
     const { eventId } = req.params;
 
-    if (!name || !members || !Array.isArray(members) || members.length === 0) {
-      return res.status(400).json({ error: "Team name and members are required" });
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+      return res.status(400).json({ error: "Invalid event ID" });
     }
-    if (!manager?.phone || !manager.phone.trim()) {
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "Team name is required" });
+    }
+    if (!members || !Array.isArray(members) || members.length === 0) {
+      return res.status(400).json({ error: "At least one team member is required" });
+    }
+    if (!manager || !manager.name || !manager.name.trim()) {
+      return res.status(400).json({ error: "Manager name is required" });
+    }
+    if (!manager.email || !manager.email.trim()) {
+      return res.status(400).json({ error: "Manager email is required" });
+    }
+    if (!manager.phone || !manager.phone.trim()) {
       return res.status(400).json({ error: "Manager phone number is required" });
     }
 
@@ -45,7 +64,7 @@ exports.signupTeam = async (req, res) => {
 
     if (existing) {
       // Update it with fresh details in case they changed anything
-      existing.name = name;
+      existing.name = name.trim();
       existing.members = members;
       existing.manager = manager;
       await existing.save();
@@ -53,7 +72,7 @@ exports.signupTeam = async (req, res) => {
     }
 
     const team = new Team({
-      name,
+      name: name.trim(),
       members,
       event: eventId,
       manager,
@@ -64,6 +83,7 @@ exports.signupTeam = async (req, res) => {
     await team.save();
     res.status(201).json({ message: "Team signed up successfully", team });
   } catch (error) {
+    console.error("Error signing up team:", error);
     res.status(500).json({ error: "Failed to sign up team" });
   }
 };
@@ -75,6 +95,9 @@ exports.signupTeam = async (req, res) => {
 exports.processTeamPayment = async (req, res) => {
   try {
     const { teamId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(teamId)) {
+      return res.status(400).json({ error: "Invalid team ID" });
+    }
 
     const team = await Team.findById(teamId);
     if (!team) return res.status(404).json({ error: "Team not found" });
@@ -123,6 +146,10 @@ exports.processTeamPayment = async (req, res) => {
 exports.handlePaymentSuccess = async (req, res) => {
   const { teamId } = req.params;
   const { session_id } = req.query;
+
+  if (!session_id) {
+    return res.redirect(`${process.env.FRONT_END_URL}events`);
+  }
 
   try {
     const session = await stripe.checkout.sessions.retrieve(session_id);
@@ -181,6 +208,10 @@ exports.cancelTeamPayment = async (req, res) => {
 exports.getUnpaidTeamsForManager = async (req, res) => {
   try {
     const { eventId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+      return res.status(400).json({ error: "Invalid event ID" });
+    }
+
     const email = req.user.email;
 
     const teams = await Team.find({
@@ -190,6 +221,7 @@ exports.getUnpaidTeamsForManager = async (req, res) => {
     });
     res.json({ teams });
   } catch (error) {
+    console.error("Error fetching unpaid teams:", error);
     res.status(500).json({ error: "Failed to fetch unpaid teams" });
   }
 };
@@ -198,10 +230,15 @@ exports.getUnpaidTeamsForManager = async (req, res) => {
 exports.getMyTeamsForEvent = async (req, res) => {
   try {
     const { eventId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+      return res.status(400).json({ error: "Invalid event ID" });
+    }
+
     const email = req.user.email;
     const teams = await Team.find({ event: eventId, "manager.email": email, paid: true });
     res.json(teams);
   } catch (error) {
+    console.error("Error fetching your teams:", error);
     res.status(500).json({ error: "Failed to fetch your teams" });
   }
 };
@@ -213,6 +250,10 @@ exports.getMyTeamsForEvent = async (req, res) => {
 exports.updateTeam = async (req, res) => {
   try {
     const { teamId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(teamId)) {
+      return res.status(400).json({ error: "Invalid team ID" });
+    }
+
     const { name, members, manager } = req.body;
     const email = req.user.email;
 
@@ -269,9 +310,14 @@ exports.updateTeam = async (req, res) => {
 exports.getTeamsForEvent = async (req, res) => {
   try {
     const { eventId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+      return res.status(400).json({ error: "Invalid event ID" });
+    }
+
     const teams = await Team.find({ event: eventId, paid: true });
     res.json(teams);
   } catch (error) {
+    console.error("Error fetching teams:", error);
     res.status(500).json({ error: "Failed to fetch teams" });
   }
 };

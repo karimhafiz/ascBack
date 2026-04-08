@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const User = require("../models/User");
 const Ticket = require("../models/Ticket");
 const CourseEnrollment = require("../models/CourseEnrollment");
@@ -45,7 +46,7 @@ exports.getDashboard = async (req, res) => {
     res.json(payload);
   } catch (err) {
     console.error("Dashboard error:", err);
-    res.status(500).json({ message: "Failed to load dashboard" });
+    res.status(500).json({ error: "Failed to load dashboard" });
   }
 };
 
@@ -58,7 +59,8 @@ exports.getAllUsers = async (req, res) => {
     const users = await User.find().select("-password -refreshToken").sort({ createdAt: -1 });
     res.json(users);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error("Error fetching users:", err);
+    res.status(500).json({ error: "Failed to fetch users" });
   }
 };
 
@@ -66,15 +68,19 @@ exports.getAllUsers = async (req, res) => {
 // Admin only — permanently delete a user account.
 // ─────────────────────────────────────────────────────────────────────────────
 exports.deleteUser = async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ error: "Invalid user ID" });
+  }
   if (req.params.id === req.user.id) {
-    return res.status(400).json({ message: "You cannot delete your own account" });
+    return res.status(400).json({ error: "You cannot delete your own account" });
   }
   try {
     const user = await User.findByIdAndDelete(req.params.id);
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) return res.status(404).json({ error: "User not found" });
     res.json({ message: "User deleted successfully" });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error("Error deleting user:", err);
+    res.status(500).json({ error: "Failed to delete user" });
   }
 };
 
@@ -83,16 +89,20 @@ exports.deleteUser = async (req, res) => {
 // Body: { role: "user" | "moderator" | "admin" }
 // ─────────────────────────────────────────────────────────────────────────────
 exports.updateUserRole = async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ error: "Invalid user ID" });
+  }
+
   const { role } = req.body;
   const validRoles = ["user", "moderator", "admin"];
 
   if (!validRoles.includes(role)) {
-    return res.status(400).json({ message: "Invalid role" });
+    return res.status(400).json({ error: "Invalid role" });
   }
 
   // Prevent admins from demoting themselves
   if (req.params.id === req.user.id) {
-    return res.status(400).json({ message: "You cannot change your own role" });
+    return res.status(400).json({ error: "You cannot change your own role" });
   }
 
   try {
@@ -101,10 +111,10 @@ exports.updateUserRole = async (req, res) => {
       { role },
       { new: true, select: "name email role" }
     );
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) return res.status(404).json({ error: "User not found" });
     res.json({ message: "Role updated", user });
   } catch (err) {
     console.error("Role update error:", err);
-    res.status(500).json({ message: "Failed to update role" });
+    res.status(500).json({ error: "Failed to update role" });
   }
 };
