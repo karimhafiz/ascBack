@@ -1,71 +1,35 @@
 const express = require("express");
 const router = express.Router();
-const Ticket = require("../models/Ticket");
-const Event = require("../models/Event");
+const ticketController = require("../controllers/ticketController");
 const authenticateToken = require("../middleware/authMiddleware");
+const authorize = require("../middleware/authorize");
 
-// Buy a ticket
-router.post("/", authenticateToken, async (req, res) => {
-  const { eventId, buyerEmail } = req.body;
-  const userId = req.user ? req.user.id : null;
+// Admin/moderator direct purchase (bypasses Stripe)
+router.post("/", authenticateToken, authorize("admin", "moderator"), ticketController.buyTicket);
 
-  const event = await Event.findById(eventId);
-  if (!event || event.ticketsAvailable <= 0) {
-    return res
-      .status(400)
-      .json({ message: "Tickets sold out or event not found" });
-  }
+// Aggregated ticket stats
+router.get("/", authenticateToken, authorize("admin", "moderator"), ticketController.getAllTickets);
 
-  const ticket = new Ticket({ eventId, buyerEmail, user: userId });
-  await ticket.save();
+// Tickets for a payment (owner or staff)
+router.get("/by-payment/:paymentId", authenticateToken, ticketController.getTicketsByPayment);
 
-  event.ticketsAvailable -= 1;
-  await event.save();
+// Verify ticket by code (admin/moderator)
+router.get(
+  "/verify/:ticketCode",
+  authenticateToken,
+  authorize("admin", "moderator"),
+  ticketController.verifyTicket
+);
 
-  res.status(201).json(ticket);
-});
+// Check in ticket (admin/moderator)
+router.post(
+  "/verify/:ticketCode/checkin",
+  authenticateToken,
+  authorize("admin", "moderator"),
+  ticketController.checkInTicket
+);
 
-// Fetch all tickets with event details
-router.get("/", async (req, res) => {
-  try {
-    // Fetch tickets and populate the eventId field with event details
-    const tickets = await Ticket.find().populate("eventId");
-
-    // Aggregate ticket data by event
-    const aggregatedData = tickets.reduce((acc, ticket) => {
-      const event = ticket.eventId; // Populated event details
-      if (!event) return acc; // Skip if event is not found
-
-      if (!acc[event._id]) {
-        acc[event._id] = {
-          title: event.title,
-          ticketsSold: 0,
-          ticketsCanceled: 0,
-          totalRevenue: 0, // Initialize total revenue
-        };
-      }
-
-      if (ticket.status === "paid") {
-        acc[event._id].ticketsSold += 1;
-        acc[event._id].totalRevenue += event.ticketPrice; // Calculate revenue dynamically
-      } else if (ticket.status === "failed" || ticket.status === "canceled") {
-        acc[event._id].ticketsCanceled += 1;
-      }
-
-      return acc;
-    }, {});
-
-    // Convert aggregated data to an array and round totalRevenue
-    const aggregatedArray = Object.values(aggregatedData).map((event) => ({
-      ...event,
-      totalRevenue: parseFloat(event.totalRevenue.toFixed(2)), // Round to 2 decimal places
-    }));
-
-    res.json(aggregatedArray);
-  } catch (error) {
-    console.error("Error fetching tickets:", error);
-    res.status(500).json({ error: "Failed to fetch tickets" });
-  }
-});
+// Single ticket by id (owner or staff)
+router.get("/:id", authenticateToken, ticketController.getTicketById);
 
 module.exports = router;

@@ -3,7 +3,8 @@ const router = express.Router();
 const eventController = require("../controllers/eventController");
 const authMiddleware = require("../middleware/authMiddleware");
 const authorize = require("../middleware/authorize");
-const upload = require("../config/multer");
+const { createUpload } = require("../config/multer");
+const upload = createUpload("event-images");
 
 // Event routes
 // Fetch all events
@@ -21,9 +22,9 @@ router.post(
 // update
 router.put(
   "/:id",
+  upload.single("image"),
   authMiddleware,
   authorize("admin", "moderator"),
-  upload.single("image"),
   eventController.updateEvent
 );
 router.delete("/:id", authMiddleware, authorize("admin", "moderator"), eventController.deleteEvent);

@@ -1,54 +1,70 @@
+const mongoose = require("mongoose");
 const Event = require("../models/Event");
-const path = require("path");
-const fs = require("fs");
-const cloudinary = require("../config/cloudinary"); // Add this at the top
+const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
+
+const ALLOWED_FIELDS = [
+  "title",
+  "shortDescription",
+  "longDescription",
+  "date",
+  "openingTime",
+  "street",
+  "postCode",
+  "city",
+  "ageRestriction",
+  "accessibilityInfo",
+  "ticketPrice",
+  "ticketsAvailable",
+  "featured",
+  "isReoccurring",
+  "reoccurringFrequency",
+  "reoccurringEndDate",
+  "reoccurringStartDate",
+  "dayOfWeek",
+  "typeOfEvent",
+  "isTournament",
+];
+
+function sanitize(data) {
+  const out = {};
+  for (const key of ALLOWED_FIELDS) {
+    if (data[key] !== undefined) out[key] = data[key];
+  }
+  return out;
+}
 
 // Get all events
 exports.getAllEvents = async (req, res) => {
   try {
     const events = await Event.find();
-
-    // Map through events and prepend the base URL to the image paths
-    // const updatedEvents = events.map((event) => {
-    //   const updatedImages = event.images.map(
-    //     (image) => `${req.protocol}://${req.get("host")}/${image}`
-    //   );
-    //   return { ...event.toObject(), images: updatedImages };
-    // });
-
     res.json(events);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Error fetching events:", error);
+    res.status(500).json({ error: "Failed to fetch events" });
   }
 };
 
 // Fetch a single event by ID
 exports.getEventById = async (req, res) => {
   try {
-    const event = await Event.findById(req.params.id);
-    if (!event) {
-      return res.status(404).json({ message: "Event not found" });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid event ID" });
     }
 
-    // Prepend the base URL to the image paths
-    // const updatedImages = event.images.map(
-    //   (image) => `${req.protocol}://${req.get("host")}/${image}`
-    // );
-
-    // res.status(200).json({ ...event.toObject(), images: updatedImages });
-    res.status(200).json(event);
+    const event = await Event.findById(req.params.id);
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+    res.json(event);
   } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Failed to fetch event", error: error.message });
+    console.error("Error fetching event:", error);
+    res.status(500).json({ error: "Failed to fetch event" });
   }
 };
+
 // Create a new event
 exports.createEvent = async (req, res) => {
-  console.log("Headers:", req.headers);
-  console.log("req.admin:", req.admin);
   try {
-    // Check if eventData exists before parsing
     if (!req.body.eventData) {
       return res.status(400).json({ error: "eventData is required" });
     }
@@ -56,145 +72,67 @@ exports.createEvent = async (req, res) => {
     let eventData;
     try {
       eventData = JSON.parse(req.body.eventData);
-    } catch (e) {
+    } catch {
       return res.status(400).json({ error: "Invalid JSON in eventData" });
     }
 
-    const {
-      title,
-      shortDescription,
-      longDescription,
-      date,
-      openingTime,
-      street,
-      postCode,
-      city,
-      ageRestriction,
-      accessibilityInfo,
-      ticketPrice,
-      featured,
-      isReoccurring,
-      reoccurringStartDate,
-      reoccurringEndDate,
-      reoccurringFrequency,
-      dayOfWeek,
-      typeOfEvent,
-    } = eventData;
-
-    // Handle the uploaded image
-    let imageUrl = null;
-    if (req.file) {
-      imageUrl = req.file.path; // This is the Cloudinary URL
-    }
+    const imageUrl = req.file ? req.file.path || req.file.secure_url : null;
+    const sanitized = sanitize(eventData);
 
     const newEvent = new Event({
-      title,
-      shortDescription,
-      longDescription,
-      date,
-      openingTime,
-      street,
-      postCode,
-      city,
-      ageRestriction,
-      accessibilityInfo,
-      ticketPrice,
-      featured: featured === true || featured === "true",
-      isReoccurring: isReoccurring === true || isReoccurring === "true",
-      reoccurringStartDate,
-      reoccurringEndDate,
-      reoccurringFrequency,
-      dayOfWeek,
+      ...sanitized,
+      featured: eventData.featured === true || eventData.featured === "true",
+      isReoccurring: eventData.isReoccurring === true || eventData.isReoccurring === "true",
+      isTournament: eventData.isTournament === true || eventData.isTournament === "true",
       images: imageUrl ? [imageUrl] : [],
-      createdBy: req.admin.id,
-      typeOfEvent,
-      isTournament,
+      createdBy: req.user.id,
     });
 
     await newEvent.save();
-    res
-      .status(201)
-      .json({ message: "Event created successfully", event: newEvent });
+    res.status(201).json({ message: "Event created successfully", event: newEvent });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Error creating event:", error);
+    res.status(500).json({ error: "Failed to create event" });
   }
 };
 
 // Update an event
 exports.updateEvent = async (req, res) => {
   try {
-    const {
-      title,
-      shortDescription,
-      longDescription,
-      date,
-      openingTime,
-      street,
-      postCode,
-      city,
-      ageRestriction,
-      accessibilityInfo,
-      ticketPrice,
-      featured,
-      isReoccurring,
-      reoccurringStartDate,
-      reoccurringEndDate,
-      reoccurringFrequency,
-      dayOfWeek,
-      typeOfEvent, // <-- add this
-      isTournament,
-    } = JSON.parse(req.body.eventData);
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid event ID" });
+    }
+
+    let eventData;
+    try {
+      eventData = JSON.parse(req.body.eventData);
+    } catch {
+      return res.status(400).json({ error: "Invalid JSON in eventData" });
+    }
 
     const event = await Event.findById(req.params.id);
-
     if (!event) {
-      return res.status(404).json({ message: "Event not found" });
+      return res.status(404).json({ error: "Event not found" });
     }
 
-    // Handle the uploaded image
     let imagePath = null;
     if (req.file) {
-      // Delete the old image from Cloudinary if it exists
       if (event.images && event.images.length > 0) {
-        // Extract public_id from the Cloudinary URL
-        const urlParts = event.images[0].split("/");
-        const publicIdWithExtension = urlParts[urlParts.length - 1];
-        const publicId = publicIdWithExtension.split(".")[0];
-        const folder = "event-images"; // The folder you used in CloudinaryStorage
-        const fullPublicId = `${folder}/${publicId}`;
-        try {
-          await cloudinary.uploader.destroy(fullPublicId);
-        } catch (err) {
-          console.error("Failed to delete old image from Cloudinary:", err);
-        }
+        await deleteCloudinaryImage(event.images[0], "event-images");
       }
-      imagePath = req.file.path; // New Cloudinary URL
+      imagePath = req.file.path || req.file.secure_url;
     }
 
-    // Update the event in the database
+    const sanitized = sanitize(eventData);
+
     const updatedEvent = await Event.findByIdAndUpdate(
       req.params.id,
       {
-        title,
-        shortDescription,
-        longDescription,
-        date,
-        openingTime,
-        street,
-        postCode,
-        city,
-        ageRestriction,
-        accessibilityInfo,
-        ticketPrice,
-        featured: featured === true || featured === "true",
-        isReoccurring: isReoccurring === true || isReoccurring === "true",
-        reoccurringStartDate,
-        reoccurringEndDate,
-        reoccurringFrequency,
-        dayOfWeek,
-        typeOfEvent, // <-- add this
-        images: imagePath ? [imagePath] : event.images, // Replace images if a new one is provided
-        isTournament,
+        ...sanitized,
+        featured: eventData.featured === true || eventData.featured === "true",
+        isReoccurring: eventData.isReoccurring === true || eventData.isReoccurring === "true",
+        isTournament: eventData.isTournament === true || eventData.isTournament === "true",
+        images: imagePath ? [imagePath] : event.images,
       },
       { new: true }
     );
@@ -202,42 +140,30 @@ exports.updateEvent = async (req, res) => {
     res.json({ message: "Event updated successfully", event: updatedEvent });
   } catch (error) {
     console.error("Error updating event:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to update event" });
   }
 };
 
 // Delete an event
 exports.deleteEvent = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid event ID" });
+    }
+
     const event = await Event.findById(req.params.id);
-
     if (!event) {
-      return res.status(404).json({ message: "Event not found" });
+      return res.status(404).json({ error: "Event not found" });
     }
 
-    // Delete associated images from Cloudinary
-    if (event.images && event.images.length > 0) {
-      for (const imageUrl of event.images) {
-        // Extract public_id from the Cloudinary URL
-        const urlParts = imageUrl.split("/");
-        const publicIdWithExtension = urlParts[urlParts.length - 1];
-        const publicId = publicIdWithExtension.split(".")[0];
-        const folder = "event-images";
-        const fullPublicId = `${folder}/${publicId}`;
-        try {
-          await cloudinary.uploader.destroy(fullPublicId);
-        } catch (err) {
-          console.error("Failed to delete image from Cloudinary:", err);
-        }
-      }
+    for (const imageUrl of event.images || []) {
+      await deleteCloudinaryImage(imageUrl, "event-images");
     }
 
-    // Delete the event from the database
     await Event.findByIdAndDelete(req.params.id);
-
     res.json({ message: "Event deleted successfully" });
   } catch (error) {
     console.error("Error deleting event:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to delete event" });
   }
 };

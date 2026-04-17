@@ -5,34 +5,14 @@ const authMiddleware = require("../middleware/authMiddleware");
 const authorize = require("../middleware/authorize");
 
 // Both admin and moderator can view the dashboard
-router.get(
-    "/dashboard",
-    authMiddleware,
-    authorize("admin", "moderator"),
-    adminController.getDashboard
-);
+router.get("/dashboard", authMiddleware, authorize("admin"), adminController.getDashboard);
 
 // Admin-only user management
-router.get(
-    "/users",
-    authMiddleware,
-    authorize("admin"),
-    adminController.getAllUsers
-);
+router.get("/users", authMiddleware, authorize("admin"), adminController.getAllUsers);
 
-router.delete(
-    "/users/:id",
-    authMiddleware,
-    authorize("admin"),
-    adminController.deleteUser
-);
+router.delete("/users/:id", authMiddleware, authorize("admin"), adminController.deleteUser);
 
 // Only admin can change roles
-router.patch(
-    "/users/:id/role",
-    authMiddleware,
-    authorize("admin"),
-    adminController.updateUserRole
-);
+router.patch("/users/:id/role", authMiddleware, authorize("admin"), adminController.updateUserRole);
 
 module.exports = router;
