@@ -78,7 +78,7 @@ exports.createEvent = async (req, res) => {
 
     const imageUrl = req.file ? req.file.path || req.file.secure_url : null;
     const sanitized = sanitize(eventData);
-
+    //boolean checks should happen before we sanitize, otherwise we might end up with "featured": "true" instead of "featured": true
     const newEvent = new Event({
       ...sanitized,
       featured: eventData.featured === true || eventData.featured === "true",
@@ -124,7 +124,7 @@ exports.updateEvent = async (req, res) => {
     }
 
     const sanitized = sanitize(eventData);
-
+    // same issue here, boolean checks should happen before we sanitize, otherwise we might end up with "featured": "true" instead of "featured": true
     const updatedEvent = await Event.findByIdAndUpdate(
       req.params.id,
       {

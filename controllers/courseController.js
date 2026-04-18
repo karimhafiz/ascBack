@@ -456,7 +456,7 @@ exports.handleEnrollmentSuccess = async (req, res) => {
       const enrollment = new CourseEnrollment(enrollmentData);
       await enrollment.save();
     }
-
+    // This needs to be atomicized with enrollment creation to avoid race conditions
     await Course.findByIdAndUpdate(courseId, { $inc: { currentEnrollment: count } });
 
     const course = await Course.findById(courseId);
@@ -531,7 +531,7 @@ exports.cancelSubscription = async (req, res) => {
       subscriptionStatus: "cancelled",
       ...(periodEnd && { currentPeriodEnd: periodEnd }),
     });
-
+    // this could use better handling and let the user know theres no course with that courseId (if necessary)
     const course = await Course.findById(enrollment.courseId);
     if (course) {
       sendSubscriptionCancellationEmail({
@@ -905,6 +905,7 @@ exports.handleWebhook = async (req, res) => {
       case "invoice.payment_succeeded": {
         const invoice = event.data.object;
         if (invoice.subscription) {
+          //no need to retrieve with Stripe API since we expand subscription in the webhook config
           const sub = await stripe.subscriptions.retrieve(invoice.subscription);
           await CourseEnrollment.findOneAndUpdate(
             { subscriptionId: invoice.subscription },
@@ -934,7 +935,7 @@ exports.handleWebhook = async (req, res) => {
           { subscriptionStatus: "cancelled", status: "cancelled" },
           { new: false }
         );
-        if (enrollment) {
+        if (enrollment /*enrollment.status !== "cancelled" */) {
           const count = enrollment.participants?.length || 1;
           await Course.findByIdAndUpdate(enrollment.courseId, {
             $inc: { currentEnrollment: -count },
