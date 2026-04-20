@@ -105,7 +105,7 @@ exports.processTeamPayment = async (req, res) => {
     const event = await Event.findById(team.event);
     if (!event) return res.status(404).json({ error: "Event not found" });
 
-    const amount = event.ticketPrice || event.tournamentFee || 50;
+    const amount = event.ticketPrice || 50;
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
