@@ -5,7 +5,12 @@ const authMiddleware = require("../middleware/authMiddleware");
 const authorize = require("../middleware/authorize");
 
 // Both admin and moderator can view the dashboard
-router.get("/dashboard", authMiddleware, authorize("admin"), adminController.getDashboard);
+router.get(
+  "/dashboard",
+  authMiddleware,
+  authorize("admin", "moderator"),
+  adminController.getDashboard
+);
 
 // Admin-only user management
 router.get("/users", authMiddleware, authorize("admin"), adminController.getAllUsers);
