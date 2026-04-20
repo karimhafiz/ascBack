@@ -267,7 +267,6 @@ exports.enrollInCourse = async (req, res) => {
       }
 
       const session = await stripe.checkout.sessions.create({
-        payment_method_types: ["card"],
         customer_email: email,
         line_items: [{ price: priceId, quantity: count }],
         mode: "subscription",
@@ -299,7 +298,6 @@ exports.enrollInCourse = async (req, res) => {
 
     // ── One-time payment flow ──────────────────────────────────────────────
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
       customer_email: email,
       line_items: [
         {
@@ -655,7 +653,6 @@ exports.reactivateSubscription = async (req, res) => {
     }
 
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
       customer_email: enrollment.buyerEmail,
       line_items: [{ price: priceId, quantity: count }],
       mode: "subscription",
@@ -785,7 +782,7 @@ exports.addParticipant = async (req, res) => {
       age: age || undefined,
       email: email || undefined,
     });
-    await enrollment.save();
+    await enrollment.save({ validateModifiedOnly: true });
 
     await Course.findByIdAndUpdate(enrollment.courseId, {
       $inc: { currentEnrollment: 1 },
@@ -868,7 +865,7 @@ exports.removeParticipant = async (req, res) => {
     }
 
     enrollment.participants.splice(participantIndex, 1);
-    await enrollment.save();
+    await enrollment.save({ validateModifiedOnly: true });
 
     await Course.findByIdAndUpdate(enrollment.courseId, {
       $inc: { currentEnrollment: -1 },

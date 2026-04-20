@@ -21,6 +21,7 @@ const courseEnrollmentSchema = new mongoose.Schema(
       default: null,
     },
     currentPeriodEnd: { type: Date },
+    lastStripeEventTimestamp: { type: Number, default: null },
     participants: [
       {
         name: { type: String, required: true },

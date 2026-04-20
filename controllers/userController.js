@@ -70,7 +70,7 @@ exports.login = async (req, res) => {
     const user = await User.findOne({ email });
     if (!user) return res.status(400).json({ error: "Invalid credentials" });
 
-    if (!user.password) {
+    if (user.authProvider === "google" || !user.password) {
       return res.status(400).json({
         error:
           "This account uses Google Sign-In. Please log in with Google or register with a password.",
@@ -128,6 +128,14 @@ exports.refresh = async (req, res) => {
     }
 
     const accessToken = generateAccessToken(user);
+    const newRefreshToken = generateRefreshToken();
+
+    user.refreshToken = hashToken(newRefreshToken);
+    user.refreshTokenExpiresAt = setRefreshTokenExpiration();
+    await user.save();
+
+    setRefreshTokenCookie(res, newRefreshToken);
+
     res.json({
       accessToken,
       user: { id: user._id, name: user.name, email: user.email, role: user.role },

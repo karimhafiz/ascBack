@@ -7,9 +7,9 @@ const Team = require("../models/Team");
 const Event = require("../models/Event");
 
 // ── GET /admin/dashboard ──────────────────────────────────────────────────────
-// Accessible by admin and moderator.
+// Admin only.
 // Returns tickets (with buyer + event details), revenue per event,
-// team registrations, and — for admins only — the full user list.
+// team registrations, and the full user list.
 // ─────────────────────────────────────────────────────────────────────────────
 exports.getDashboard = async (req, res) => {
   try {
@@ -33,17 +33,11 @@ exports.getDashboard = async (req, res) => {
       "title instructor category price currentEnrollment maxEnrollment enrollmentOpen"
     );
 
-    const payload = { tickets, events, teams, enrollments, courses };
+    const users = await User.find({}, "name email role createdAt isActive isBanned").sort({
+      createdAt: -1,
+    });
 
-    // User list — admins only
-    if (req.user.role === "admin") {
-      const users = await User.find({}, "name email role createdAt isActive isBanned").sort({
-        createdAt: -1,
-      });
-      payload.users = users;
-    }
-
-    res.json(payload);
+    res.json({ tickets, events, teams, enrollments, courses, users });
   } catch (err) {
     console.error("Dashboard error:", err);
     res.status(500).json({ error: "Failed to load dashboard" });

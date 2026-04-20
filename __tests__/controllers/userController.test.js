@@ -194,6 +194,7 @@ describe("User Controller", () => {
         email: "test@example.com",
         role: "user",
         refreshTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        save: jest.fn().mockResolvedValue(true),
       };
       // Controller hashes the token before querying
       User.findOne.mockResolvedValue(mockUser);
@@ -206,6 +207,9 @@ describe("User Controller", () => {
       expect(response.body).toHaveProperty("accessToken");
       // Verify the controller hashed the token before lookup
       expect(User.findOne).toHaveBeenCalledWith({ refreshToken: "hashed-valid-refresh-token" });
+      // Verify token rotation — new token saved and cookie set
+      expect(mockUser.save).toHaveBeenCalled();
+      expect(mockUser.refreshToken).toBe("hashed-mock-refresh-token");
     });
 
     it("should return 401 if no refresh token", async () => {

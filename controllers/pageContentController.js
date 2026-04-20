@@ -29,31 +29,46 @@ exports.updatePageContent = async (req, res) => {
       return res.status(400).json({ error: "Invalid JSON in contentData" });
     }
 
+    // upload.any() gives a flat array: [{ fieldname, secure_url, public_id, ... }]
+    const uploadedFiles = req.files || [];
+
     // Handle image upload for heroImage (home page)
-    if (req.file && page === "home") {
+    const heroFile = uploadedFiles.find((f) => f.fieldname === "heroImage");
+    if (heroFile && page === "home") {
       const existing = await PageContent.findOne({ page: "home" });
       if (existing?.heroImageId) {
         await deleteCloudinaryImage(existing.heroImageId);
       }
-      updates.heroImage = req.file.secure_url;
-      updates.heroImageId = req.file.public_id;
+      updates.heroImage = heroFile.secure_url;
+      updates.heroImageId = heroFile.public_id;
     }
-    // give each card an id for robust logic
+
     // Handle activity card image uploads (about page)
-    // Expects files as activityImage_0, activityImage_1 etc.
-    if (page === "about" && req.files) {
+    // Expects files as activityImage_<cardId> (subdocument _id)
+    if (page === "about") {
       const cardImages = {};
-      for (const [fieldname, files] of Object.entries(req.files)) {
-        const match = fieldname.match(/^activityImage_(\d+)$/);
+      for (const file of uploadedFiles) {
+        const match = file.fieldname.match(/^activityImage_(.+)$/);
         if (match) {
-          cardImages[parseInt(match[1])] = files[0].secure_url;
+          cardImages[match[1]] = file.secure_url;
         }
       }
       if (updates.activityCards && Object.keys(cardImages).length > 0) {
-        updates.activityCards = updates.activityCards.map((card, i) => ({
-          ...card,
-          image: cardImages[i] ?? card.image,
-        }));
+        const existing = await PageContent.findOne({ page: "about" });
+        const oldCards = existing?.activityCards || [];
+
+        // Delete old Cloudinary images being replaced
+        await Promise.all(
+          Object.keys(cardImages).map((cardId) => {
+            const oldCard = oldCards.find((c) => c._id?.toString() === cardId);
+            return oldCard?.image ? deleteCloudinaryImage(oldCard.image, "page-images") : null;
+          })
+        );
+
+        updates.activityCards = updates.activityCards.map((card) => {
+          const newImage = card._id ? cardImages[card._id] : undefined;
+          return { ...card, image: newImage ?? card.image };
+        });
       }
     }
 
@@ -77,8 +92,12 @@ exports.resetPageContent = async (req, res) => {
     const { page, section } = req.params;
     const existing = await PageContent.findOne({ page });
 
+    if (!existing) {
+      return res.json({ message: "Page content already at defaults" });
+    }
+
     if (page === "home") {
-      if (existing?.heroImageId) {
+      if (existing.heroImageId) {
         await deleteCloudinaryImage(existing.heroImageId);
       }
       await PageContent.deleteOne({ page });
@@ -87,10 +106,12 @@ exports.resetPageContent = async (req, res) => {
 
     if (page === "about") {
       const resettingCards = !section || section === "cards";
-      if (resettingCards && existing?.activityCards) {
-        for (const card of existing.activityCards) {
-          if (card.image) await deleteCloudinaryImage(card.image, "page-images");
-        }
+      if (resettingCards && existing.activityCards?.length) {
+        await Promise.all(
+          existing.activityCards
+            .filter((card) => card.image)
+            .map((card) => deleteCloudinaryImage(card.image, "page-images"))
+        );
       }
 
       if (!section) {

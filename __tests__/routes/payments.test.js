@@ -71,7 +71,6 @@ describe("Payment Routes — Integration", () => {
       // Verify Stripe was called with correct amount (10 * 100 = 1000 pence)
       expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          payment_method_types: ["card"],
           customer_email: "buyer@test.com",
           mode: "payment",
           line_items: [
