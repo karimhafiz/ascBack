@@ -782,7 +782,7 @@ exports.addParticipant = async (req, res) => {
       age: age || undefined,
       email: email || undefined,
     });
-    await enrollment.save();
+    await enrollment.save({ validateModifiedOnly: true });
 
     await Course.findByIdAndUpdate(enrollment.courseId, {
       $inc: { currentEnrollment: 1 },
@@ -865,7 +865,7 @@ exports.removeParticipant = async (req, res) => {
     }
 
     enrollment.participants.splice(participantIndex, 1);
-    await enrollment.save();
+    await enrollment.save({ validateModifiedOnly: true });
 
     await Course.findByIdAndUpdate(enrollment.courseId, {
       $inc: { currentEnrollment: -1 },
