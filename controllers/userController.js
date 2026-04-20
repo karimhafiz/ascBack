@@ -128,6 +128,14 @@ exports.refresh = async (req, res) => {
     }
 
     const accessToken = generateAccessToken(user);
+    const newRefreshToken = generateRefreshToken();
+
+    user.refreshToken = hashToken(newRefreshToken);
+    user.refreshTokenExpiresAt = setRefreshTokenExpiration();
+    await user.save();
+
+    setRefreshTokenCookie(res, newRefreshToken);
+
     res.json({
       accessToken,
       user: { id: user._id, name: user.name, email: user.email, role: user.role },
