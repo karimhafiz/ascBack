@@ -77,13 +77,15 @@ exports.createEvent = async (req, res) => {
     }
 
     const imageUrl = req.file ? req.file.path || req.file.secure_url : null;
+
+    eventData.featured = eventData.featured === true || eventData.featured === "true";
+    eventData.isReoccurring =
+      eventData.isReoccurring === true || eventData.isReoccurring === "true";
+    eventData.isTournament = eventData.isTournament === true || eventData.isTournament === "true";
+
     const sanitized = sanitize(eventData);
-    //boolean checks should happen before we sanitize, otherwise we might end up with "featured": "true" instead of "featured": true
     const newEvent = new Event({
       ...sanitized,
-      featured: eventData.featured === true || eventData.featured === "true",
-      isReoccurring: eventData.isReoccurring === true || eventData.isReoccurring === "true",
-      isTournament: eventData.isTournament === true || eventData.isTournament === "true",
       images: imageUrl ? [imageUrl] : [],
       createdBy: req.user.id,
     });
@@ -123,15 +125,16 @@ exports.updateEvent = async (req, res) => {
       imagePath = req.file.path || req.file.secure_url;
     }
 
+    eventData.featured = eventData.featured === true || eventData.featured === "true";
+    eventData.isReoccurring =
+      eventData.isReoccurring === true || eventData.isReoccurring === "true";
+    eventData.isTournament = eventData.isTournament === true || eventData.isTournament === "true";
+
     const sanitized = sanitize(eventData);
-    // same issue here, boolean checks should happen before we sanitize, otherwise we might end up with "featured": "true" instead of "featured": true
     const updatedEvent = await Event.findByIdAndUpdate(
       req.params.id,
       {
         ...sanitized,
-        featured: eventData.featured === true || eventData.featured === "true",
-        isReoccurring: eventData.isReoccurring === true || eventData.isReoccurring === "true",
-        isTournament: eventData.isTournament === true || eventData.isTournament === "true",
         images: imagePath ? [imagePath] : event.images,
       },
       { new: true }
