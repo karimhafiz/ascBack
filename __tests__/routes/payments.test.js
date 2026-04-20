@@ -106,7 +106,8 @@ describe("Payment Routes — Integration", () => {
             email: "buyer@test.com",
             quantity: "2",
           }),
-        })
+        }),
+        expect.objectContaining({ idempotencyKey: expect.any(String) })
       );
     });
 

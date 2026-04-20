@@ -32,30 +32,38 @@ exports.createCheckoutSession = async (req, res) => {
       return res.status(400).json({ error: "Not enough tickets available" });
     }
 
-    const session = await stripe.checkout.sessions.create({
-      customer_email: email,
-      line_items: [
-        {
-          price_data: {
-            currency: "gbp",
-            product_data: {
-              name: event.title,
-              description: event.shortDescription,
+    // Idempotency key prevents duplicate checkout sessions from double-clicks.
+    // 10-second bucket means rapid retries within 10s return the same session.
+    const timeBucket = Math.floor(Date.now() / 10000);
+    const idempotencyKey = `ticket-${eventId}-${email}-${quantity}-${timeBucket}`;
+
+    const session = await stripe.checkout.sessions.create(
+      {
+        customer_email: email,
+        line_items: [
+          {
+            price_data: {
+              currency: "gbp",
+              product_data: {
+                name: event.title,
+                description: event.shortDescription,
+              },
+              unit_amount: Math.round(event.ticketPrice * 100),
             },
-            unit_amount: Math.round(event.ticketPrice * 100),
+            quantity,
           },
-          quantity,
+        ],
+        mode: "payment",
+        success_url: `${process.env.BACK_END_URL}payments/success?session_id={CHECKOUT_SESSION_ID}&eventId=${eventId}`,
+        cancel_url: `${process.env.FRONT_END_URL}events/${eventId}`,
+        metadata: {
+          eventId: eventId.toString(),
+          email,
+          quantity: quantity.toString(),
         },
-      ],
-      mode: "payment",
-      success_url: `${process.env.BACK_END_URL}payments/success?session_id={CHECKOUT_SESSION_ID}&eventId=${eventId}`,
-      cancel_url: `${process.env.FRONT_END_URL}events/${eventId}`,
-      metadata: {
-        eventId: eventId.toString(),
-        email,
-        quantity: quantity.toString(),
       },
-    });
+      { idempotencyKey }
+    );
 
     res.json({ url: session.url });
   } catch (err) {
