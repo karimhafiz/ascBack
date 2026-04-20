@@ -40,7 +40,7 @@ exports.updatePageContent = async (req, res) => {
     }
 
     // Handle activity card image uploads (about page)
-    // Expects files as activityImage_<cardId> (subdocument _id)
+    // Supports both activityImage_<cardId> and activityImage_<index> formats
     if (page === "about" && req.files) {
       const existing = await PageContent.findOne({ page: "about" });
       const cardImages = {};
@@ -51,18 +51,22 @@ exports.updatePageContent = async (req, res) => {
         }
       }
       if (updates.activityCards && Object.keys(cardImages).length > 0) {
-        // Delete old Cloudinary images being replaced
         const oldCards = existing?.activityCards || [];
-        await Promise.all(
-          Object.keys(cardImages).map((cardId) => {
-            const oldCard = oldCards.find((c) => c._id?.toString() === cardId);
-            return oldCard?.image ? deleteCloudinaryImage(oldCard.image, "page-images") : null;
-          })
-        );
 
-        updates.activityCards = updates.activityCards.map((card) => {
-          const newImage = card._id ? cardImages[card._id] : undefined;
-          return { ...card, image: newImage ?? card.image };
+        updates.activityCards = updates.activityCards.map((card, i) => {
+          // Match by _id first, fall back to index
+          const newImage = (card._id && cardImages[card._id]) || cardImages[String(i)];
+          if (!newImage) return card;
+
+          // Delete old Cloudinary image being replaced
+          const oldCard = card._id
+            ? oldCards.find((c) => c._id?.toString() === card._id)
+            : oldCards[i];
+          if (oldCard?.image) {
+            deleteCloudinaryImage(oldCard.image, "page-images").catch(() => {});
+          }
+
+          return { ...card, image: newImage };
         });
       }
     }
