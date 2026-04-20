@@ -29,30 +29,35 @@ exports.updatePageContent = async (req, res) => {
       return res.status(400).json({ error: "Invalid JSON in contentData" });
     }
 
+    // upload.any() gives a flat array: [{ fieldname, secure_url, public_id, ... }]
+    const uploadedFiles = req.files || [];
+
     // Handle image upload for heroImage (home page)
-    if (req.file && page === "home") {
+    const heroFile = uploadedFiles.find((f) => f.fieldname === "heroImage");
+    if (heroFile && page === "home") {
       const existing = await PageContent.findOne({ page: "home" });
       if (existing?.heroImageId) {
         await deleteCloudinaryImage(existing.heroImageId);
       }
-      updates.heroImage = req.file.secure_url;
-      updates.heroImageId = req.file.public_id;
+      updates.heroImage = heroFile.secure_url;
+      updates.heroImageId = heroFile.public_id;
     }
 
     // Handle activity card image uploads (about page)
     // Expects files as activityImage_<cardId> (subdocument _id)
-    if (page === "about" && req.files) {
-      const existing = await PageContent.findOne({ page: "about" });
+    if (page === "about") {
       const cardImages = {};
-      for (const [fieldname, files] of Object.entries(req.files)) {
-        const match = fieldname.match(/^activityImage_(.+)$/);
+      for (const file of uploadedFiles) {
+        const match = file.fieldname.match(/^activityImage_(.+)$/);
         if (match) {
-          cardImages[match[1]] = files[0].secure_url;
+          cardImages[match[1]] = file.secure_url;
         }
       }
       if (updates.activityCards && Object.keys(cardImages).length > 0) {
-        // Delete old Cloudinary images being replaced
+        const existing = await PageContent.findOne({ page: "about" });
         const oldCards = existing?.activityCards || [];
+
+        // Delete old Cloudinary images being replaced
         await Promise.all(
           Object.keys(cardImages).map((cardId) => {
             const oldCard = oldCards.find((c) => c._id?.toString() === cardId);
