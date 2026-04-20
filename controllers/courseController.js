@@ -267,7 +267,6 @@ exports.enrollInCourse = async (req, res) => {
       }
 
       const session = await stripe.checkout.sessions.create({
-        automatic_payment_methods: { enabled: true },
         customer_email: email,
         line_items: [{ price: priceId, quantity: count }],
         mode: "subscription",
@@ -299,7 +298,6 @@ exports.enrollInCourse = async (req, res) => {
 
     // ── One-time payment flow ──────────────────────────────────────────────
     const session = await stripe.checkout.sessions.create({
-      automatic_payment_methods: { enabled: true },
       customer_email: email,
       line_items: [
         {
@@ -655,7 +653,6 @@ exports.reactivateSubscription = async (req, res) => {
     }
 
     const session = await stripe.checkout.sessions.create({
-      automatic_payment_methods: { enabled: true },
       customer_email: enrollment.buyerEmail,
       line_items: [{ price: priceId, quantity: count }],
       mode: "subscription",

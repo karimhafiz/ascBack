@@ -108,7 +108,6 @@ exports.processTeamPayment = async (req, res) => {
     const amount = event.ticketPrice || 50;
 
     const session = await stripe.checkout.sessions.create({
-      automatic_payment_methods: { enabled: true },
       customer_email: team.manager.email,
       line_items: [
         {
