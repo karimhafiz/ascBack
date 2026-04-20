@@ -48,6 +48,7 @@ exports.buyTicket = async (req, res) => {
   }
 };
 
+//rename function, misleading
 // GET /tickets — aggregated ticket stats (admin/moderator)
 exports.getAllTickets = async (req, res) => {
   try {

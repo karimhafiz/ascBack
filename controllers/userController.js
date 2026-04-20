@@ -124,7 +124,7 @@ exports.refresh = async (req, res) => {
 
     if (user.isBanned) {
       clearRefreshTokenCookie(res);
-      return res.status(403).json({ error: "Account suspended." });
+      return res.status(403).json({ error: "Account Banned." });
     }
 
     const accessToken = generateAccessToken(user);

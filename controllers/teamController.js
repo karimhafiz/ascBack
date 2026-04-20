@@ -159,6 +159,7 @@ exports.handlePaymentSuccess = async (req, res) => {
     }
 
     const team = await Team.findByIdAndUpdate(
+      //right here
       teamId,
       { paid: true, paymentId: session.id },
       { new: true }
