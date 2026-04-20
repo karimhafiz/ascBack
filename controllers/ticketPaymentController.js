@@ -79,6 +79,7 @@ exports.handleSuccess = async (req, res) => {
       return res.status(400).json({ error: "Payment not completed" });
     }
 
+    // Idempotency — if tickets already exist for this session, just redirect
     const existingTicket = await Ticket.findOne({ paymentId: session.id });
     if (existingTicket) {
       return res.redirect(
@@ -95,25 +96,49 @@ exports.handleSuccess = async (req, res) => {
 
     const user = await User.findOne({ email });
 
-    const ticketIds = [];
-    for (let i = 0; i < qty; i++) {
-      const ticket = new Ticket({
-        eventId,
-        buyerEmail: email,
-        paymentId: session.id,
-        status: "paid",
-        user: user?._id ?? null,
-      });
-      await ticket.save();
-      ticketIds.push(ticket._id);
-    }
+    // Wrap ticket creation + event update in a transaction so either
+    // everything succeeds or nothing is written
+    const mongoSession = await mongoose.startSession();
+    let ticketIds;
+    try {
+      await mongoSession.withTransaction(async () => {
+        ticketIds = [];
+        for (let i = 0; i < qty; i++) {
+          const ticket = new Ticket({
+            eventId,
+            buyerEmail: email,
+            paymentId: session.id,
+            status: "paid",
+            user: user?._id ?? null,
+          });
+          await ticket.save({ session: mongoSession });
+          ticketIds.push(ticket._id);
+        }
 
-    // Atomic decrement — collapses check + update into one operation to prevent overselling
-    await Event.findOneAndUpdate({ _id: eventId }, { $inc: { totalRevenue: amountPaid } });
-    await Event.findOneAndUpdate(
-      { _id: eventId, ticketsAvailable: { $gte: qty } },
-      { $inc: { ticketsAvailable: -qty } }
-    );
+        // Atomic decrement + revenue update — if not enough tickets, the
+        // condition fails and we throw to roll back
+        const updated = await Event.findOneAndUpdate(
+          { _id: eventId, ticketsAvailable: { $gte: qty } },
+          { $inc: { ticketsAvailable: -qty, totalRevenue: amountPaid } },
+          { session: mongoSession, new: true }
+        );
+        if (!updated) throw new Error("Not enough tickets available");
+      });
+    } catch (txErr) {
+      // Transaction rolled back — payment went through but we couldn't
+      // fulfil the order. Issue an automatic refund.
+      console.error("Ticket transaction failed, issuing refund:", txErr);
+      try {
+        await stripe.refunds.create({ payment_intent: session.payment_intent });
+      } catch (refundErr) {
+        console.error("Automatic refund failed:", refundErr);
+      }
+      return res.redirect(
+        `${process.env.FRONT_END_URL}events/${eventId}?error=tickets_unavailable`
+      );
+    } finally {
+      await mongoSession.endSession();
+    }
 
     // Fire-and-forget: send confirmation email without blocking the redirect
     const event = await Event.findById(eventId);
