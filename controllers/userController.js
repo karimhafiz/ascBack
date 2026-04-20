@@ -70,7 +70,7 @@ exports.login = async (req, res) => {
     const user = await User.findOne({ email });
     if (!user) return res.status(400).json({ error: "Invalid credentials" });
 
-    if (!user.password) {
+    if (user.authProvider === "google") {
       return res.status(400).json({
         error:
           "This account uses Google Sign-In. Please log in with Google or register with a password.",
