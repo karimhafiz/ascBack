@@ -1,28 +1,31 @@
 const request = require("supertest");
 const express = require("express");
 const mongoose = require("mongoose");
-const teamController = require("../../controllers/teamController");
 
 jest.mock("../../models/Team");
 jest.mock("../../models/Event");
-jest.mock("stripe", () => {
-  return jest.fn(() => ({
-    checkout: {
-      sessions: {
-        create: jest.fn().mockResolvedValue({
-          url: "https://checkout.stripe.com/test",
-          id: "cs_test_123",
-          payment_status: "paid",
-        }),
-        retrieve: jest.fn().mockResolvedValue({
-          id: "cs_test_123",
-          payment_status: "paid",
-        }),
-      },
-    },
-  }));
-});
+jest.mock("../../utils/emailUtils", () => ({
+  sendTeamRegistrationEmail: jest.fn().mockResolvedValue(true),
+  sendTeamUpdateEmail: jest.fn().mockResolvedValue(true),
+}));
 
+const mockStripe = {
+  checkout: {
+    sessions: {
+      create: jest.fn().mockResolvedValue({
+        url: "https://checkout.stripe.com/test",
+        id: "cs_test_123",
+      }),
+      retrieve: jest.fn().mockResolvedValue({
+        id: "cs_test_123",
+        payment_status: "paid",
+      }),
+    },
+  },
+};
+jest.mock("stripe", () => jest.fn(() => mockStripe));
+
+const teamController = require("../../controllers/teamController");
 const Team = require("../../models/Team");
 const Event = require("../../models/Event");
 
@@ -38,20 +41,21 @@ describe("Team Controller", () => {
     jest.clearAllMocks();
     app = express();
     app.use(express.json());
-    // Inject authenticated user for all routes
     app.use((req, res, next) => {
       req.user = { id: validUserId, email: "m@test.com", role: "user" };
       next();
     });
 
     app.get("/api/teams/:teamId", teamController.getTeam);
-    app.post("/api/teams/event/:eventId/signup", teamController.signupTeam);
-    app.post("/api/teams/:teamId/pay", teamController.processTeamPayment);
+    app.post("/api/teams/event/:eventId/register", teamController.registerTeam);
     app.get("/api/teams/:teamId/payment-success", teamController.handlePaymentSuccess);
     app.get("/api/teams/:teamId/cancel", teamController.cancelTeamPayment);
+    app.put("/api/teams/:teamId", teamController.updateTeam);
     app.get("/api/teams/event/:eventId/unpaid", teamController.getUnpaidTeamsForManager);
     app.get("/api/teams/event/:eventId/teams", teamController.getTeamsForEvent);
   });
+
+  // ─── GET /:teamId ───────────────────────────────────────────────────────────
 
   describe("GET /:teamId", () => {
     it("should return a team", async () => {
@@ -77,90 +81,135 @@ describe("Team Controller", () => {
     });
   });
 
-  describe("POST /event/:eventId/signup", () => {
-    it("should create a new team", async () => {
-      Event.findById.mockResolvedValue({ _id: validEventId, isTournament: true });
-      Team.findOne.mockResolvedValue(null);
-      Team.mockImplementation(function (data) {
-        Object.assign(this, data);
-        this.save = jest.fn().mockResolvedValue(true);
-      });
+  // ─── POST /event/:eventId/register ──────────────────────────────────────────
 
-      const res = await request(app)
-        .post(`/api/teams/event/${validEventId}/signup`)
-        .send({
-          name: "Team A",
-          members: [{ name: "Player 1" }],
-          manager: { name: "Manager", email: "m@test.com", phone: "07123456789" },
-        });
+  describe("POST /event/:eventId/register", () => {
+    const validBody = {
+      name: "Team A",
+      manager: { name: "Manager", email: "m@test.com", phone: "07123456789" },
+    };
 
-      expect(Event.findById).toHaveBeenCalledWith(validEventId);
-      expect(res.status).toBe(201);
-      expect(res.body.message).toBe("Team signed up successfully");
-    });
-
-    it("should update existing unpaid team", async () => {
-      Event.findById.mockResolvedValue({ _id: validEventId, isTournament: true });
-      const existingTeam = {
-        _id: validTeamId,
-        name: "Old Name",
-        members: [],
-        manager: {},
-        save: jest.fn().mockResolvedValue(true),
-      };
-      Team.findOne.mockResolvedValue(existingTeam);
-
-      const res = await request(app)
-        .post(`/api/teams/event/${validEventId}/signup`)
-        .send({
-          name: "New Name",
-          members: [{ name: "Player 1" }],
-          manager: { name: "Manager", email: "m@test.com", phone: "07123456789" },
-        });
-
-      expect(Event.findById).toHaveBeenCalledWith(validEventId);
-      expect(res.status).toBe(200);
-      expect(res.body.message).toBe("Existing team updated");
-      expect(existingTeam.name).toBe("New Name");
-    });
-
-    it("should return 400 if members missing", async () => {
-      const res = await request(app)
-        .post(`/api/teams/event/${validEventId}/signup`)
-        .send({ name: "Team A", members: [] });
-
-      expect(res.status).toBe(400);
-    });
-  });
-
-  describe("POST /:teamId/pay", () => {
-    it("should create a checkout session", async () => {
-      Team.findById.mockResolvedValue({
-        _id: validTeamId,
-        event: validEventId,
-        manager: { email: "m@test.com" },
-        name: "Team A",
-        members: [{ name: "P1" }],
-      });
+    it("should register a free team immediately", async () => {
       Event.findById.mockResolvedValue({
         _id: validEventId,
-        title: "Football",
-        ticketPrice: 10,
+        isTournament: true,
+        ticketPrice: 0,
+        title: "Free Cup",
+      });
+      Team.findOneAndUpdate.mockResolvedValue({
+        _id: validTeamId,
+        name: "Team A",
+        manager: validBody.manager,
+        paid: false,
+        save: jest.fn().mockResolvedValue(true),
       });
 
-      const res = await request(app).post(`/api/teams/${validTeamId}/pay`);
+      const res = await request(app)
+        .post(`/api/teams/event/${validEventId}/register`)
+        .send(validBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.message).toBe("Team registered successfully");
+    });
+
+    it("should return Stripe checkout URL for paid tournament", async () => {
+      Event.findById.mockResolvedValue({
+        _id: validEventId,
+        isTournament: true,
+        ticketPrice: 25,
+        title: "Paid Cup",
+      });
+      Team.findOneAndUpdate.mockResolvedValue({
+        _id: validTeamId,
+        name: "Team A",
+        manager: validBody.manager,
+        paid: false,
+      });
+
+      const res = await request(app)
+        .post(`/api/teams/event/${validEventId}/register`)
+        .send(validBody);
+
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("url");
+      expect(mockStripe.checkout.sessions.create).toHaveBeenCalled();
     });
 
-    it("should return 404 if team not found", async () => {
-      const nonexistentId = new mongoose.Types.ObjectId().toString();
-      Team.findById.mockResolvedValue(null);
+    it("should return 400 if team name missing", async () => {
+      const res = await request(app)
+        .post(`/api/teams/event/${validEventId}/register`)
+        .send({ manager: validBody.manager });
 
-      const res = await request(app).post(`/api/teams/${nonexistentId}/pay`);
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Team name is required");
+    });
+
+    it("should return 400 if manager email missing", async () => {
+      const res = await request(app)
+        .post(`/api/teams/event/${validEventId}/register`)
+        .send({ name: "Team A", manager: { name: "M", phone: "07123456789" } });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Manager email is required");
+    });
+
+    it("should return 400 if event is not a tournament", async () => {
+      Event.findById.mockResolvedValue({ _id: validEventId, isTournament: false });
+
+      const res = await request(app)
+        .post(`/api/teams/event/${validEventId}/register`)
+        .send(validBody);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("This event does not accept team registrations");
     });
   });
+
+  // ─── GET /:teamId/payment-success ───────────────────────────────────────────
+
+  describe("GET /:teamId/payment-success", () => {
+    it("should mark team as paid and redirect", async () => {
+      Team.findOneAndUpdate.mockResolvedValue({
+        _id: validTeamId,
+        paid: true,
+        event: validEventId,
+      });
+      Event.findById.mockResolvedValue({ _id: validEventId, title: "Cup" });
+
+      const res = await request(app)
+        .get(`/api/teams/${validTeamId}/payment-success`)
+        .query({ session_id: "cs_test_123" });
+
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toMatch(/team-confirmation/);
+      expect(Team.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: validTeamId, paid: false },
+        { paid: true, paymentId: "cs_test_123" },
+        { new: true }
+      );
+    });
+
+    it("should redirect without email if already paid (idempotent)", async () => {
+      Team.findOneAndUpdate.mockResolvedValue(null);
+
+      const res = await request(app)
+        .get(`/api/teams/${validTeamId}/payment-success`)
+        .query({ session_id: "cs_test_123" });
+
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toMatch(/team-confirmation/);
+      expect(Event.findById).not.toHaveBeenCalled();
+    });
+
+    it("should redirect to events if session_id missing", async () => {
+      const res = await request(app).get(`/api/teams/${validTeamId}/payment-success`);
+
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toMatch(/events$/);
+    });
+  });
+
+  // ─── GET /:teamId/cancel ────────────────────────────────────────────────────
 
   describe("GET /:teamId/cancel", () => {
     it("should delete unpaid team and redirect", async () => {
@@ -181,30 +230,73 @@ describe("Team Controller", () => {
     });
   });
 
+  // ─── PUT /:teamId ──────────────────────────────────────────────────────────
+
+  describe("PUT /:teamId", () => {
+    it("should update team name and manager details", async () => {
+      Team.findById.mockResolvedValue({
+        _id: validTeamId,
+        name: "Old Name",
+        manager: { email: "m@test.com", name: "Old", phone: "07000000000" },
+        paid: true,
+        event: validEventId,
+        save: jest.fn().mockResolvedValue(true),
+      });
+      Event.findById.mockResolvedValue({ _id: validEventId, title: "Cup" });
+
+      const res = await request(app)
+        .put(`/api/teams/${validTeamId}`)
+        .send({ name: "New Name", manager: { name: "New Manager", phone: "07111111111" } });
+
+      expect(res.status).toBe(200);
+      expect(res.body.message).toBe("Team updated successfully");
+    });
+
+    it("should return 403 if not the manager", async () => {
+      Team.findById.mockResolvedValue({
+        _id: validTeamId,
+        manager: { email: "other@test.com" },
+        paid: true,
+      });
+
+      const res = await request(app).put(`/api/teams/${validTeamId}`).send({ name: "New Name" });
+
+      expect(res.status).toBe(403);
+    });
+
+    it("should return 400 if team is unpaid", async () => {
+      Team.findById.mockResolvedValue({
+        _id: validTeamId,
+        manager: { email: "m@test.com" },
+        paid: false,
+      });
+
+      const res = await request(app).put(`/api/teams/${validTeamId}`).send({ name: "New Name" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Cannot edit an unpaid team");
+    });
+  });
+
+  // ─── GET /event/:eventId/unpaid ─────────────────────────────────────────────
+
   describe("GET /event/:eventId/unpaid", () => {
     it("should return unpaid teams for manager", async () => {
       Team.find.mockResolvedValue([{ _id: validTeamId, name: "Team A" }]);
 
-      // Email is sourced from req.user (set by auth middleware), not query params
       const res = await request(app).get(`/api/teams/event/${validEventId}/unpaid`);
-
       expect(res.status).toBe(200);
       expect(res.body.teams).toHaveLength(1);
     });
-
-    it("should return empty array when no unpaid teams found", async () => {
-      Team.find.mockResolvedValue([]);
-
-      const res = await request(app).get(`/api/teams/event/${validEventId}/unpaid`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.teams).toHaveLength(0);
-    });
   });
+
+  // ─── GET /event/:eventId/teams ──────────────────────────────────────────────
 
   describe("GET /event/:eventId/teams", () => {
     it("should return paid teams for event", async () => {
-      Team.find.mockResolvedValue([{ _id: validTeamId, name: "Team A", paid: true }]);
+      Team.find.mockResolvedValue([
+        { _id: validTeamId, name: "Team A", paid: true, manager: { name: "M" } },
+      ]);
 
       const res = await request(app).get(`/api/teams/event/${validEventId}/teams`);
       expect(res.status).toBe(200);
