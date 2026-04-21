@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Course = require("../models/Course");
 const CourseEnrollment = require("../models/CourseEnrollment");
 const User = require("../models/User");
+const WebhookEvent = require("../models/WebhookEvent");
 const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
 const {
   sendCourseEnrollmentEmail,
@@ -12,6 +13,36 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 // Stripe moved current_period_end from subscription to subscription item
 function getSubPeriodEnd(sub) {
   return sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
+}
+
+function resolveCurrentPeriodEnd(sub, fallbackInterval = "month") {
+  const periodTs = getSubPeriodEnd(sub);
+  if (periodTs) return new Date(periodTs * 1000);
+  console.warn(`Missing current_period_end for sub ${sub.id}, using fallback`);
+  const now = new Date();
+  if (fallbackInterval === "year") now.setFullYear(now.getFullYear() + 1);
+  else now.setMonth(now.getMonth() + 1);
+  return now;
+}
+
+// Create a Stripe product + recurring price for a subscription course,
+// then persist the IDs back to the course document.
+async function createStripeProductAndPrice(course) {
+  const product = await stripe.products.create({
+    name: course.title,
+    description: course.shortDescription || course.instructor || "",
+  });
+  const price = await stripe.prices.create({
+    product: product.id,
+    unit_amount: Math.round(course.price * 100),
+    currency: "gbp",
+    recurring: { interval: course.billingInterval || "month" },
+  });
+  await Course.findByIdAndUpdate(course._id, {
+    stripeProductId: product.id,
+    stripePriceId: price.id,
+  });
+  return { stripeProductId: product.id, stripePriceId: price.id };
 }
 
 const ALLOWED_FIELDS = [
@@ -88,6 +119,14 @@ exports.createCourse = async (req, res) => {
     });
 
     await course.save();
+
+    // Create Stripe product + price upfront for subscription courses
+    if (course.isSubscription && course.price > 0) {
+      const { stripeProductId, stripePriceId } = await createStripeProductAndPrice(course);
+      course.stripeProductId = stripeProductId;
+      course.stripePriceId = stripePriceId;
+    }
+
     res.status(201).json({ message: "Course created successfully", course });
   } catch (err) {
     console.error("Error creating course:", err);
@@ -122,20 +161,27 @@ exports.updateCourse = async (req, res) => {
     data.enrollmentOpen = data.enrollmentOpen !== false && data.enrollmentOpen !== "false";
     const sanitized = sanitize(data);
 
-    // If billing interval or price changed on a subscription course, invalidate
-    // the cached Stripe price so a fresh one is created on next enrollment.
+    // If billing interval or price changed on a subscription course, create
+    // a new Stripe product + price immediately.
     const intervalChanged =
       sanitized.billingInterval && sanitized.billingInterval !== course.billingInterval;
     const priceChanged = sanitized.price != null && sanitized.price !== course.price;
-    const resetStripe =
-      course.isSubscription && course.stripePriceId && (intervalChanged || priceChanged);
+    const needsNewStripe =
+      course.isSubscription && course.price > 0 && (intervalChanged || priceChanged);
+
+    let stripeFields = {};
+    if (needsNewStripe) {
+      // Apply updated price/interval to a temp object for Stripe creation
+      const updatedCourse = { ...course.toObject(), ...sanitized };
+      stripeFields = await createStripeProductAndPrice(updatedCourse);
+    }
 
     const updated = await Course.findByIdAndUpdate(
       req.params.id,
       {
         ...sanitized,
+        ...stripeFields,
         images: imagePath ? [imagePath] : course.images,
-        ...(resetStripe && { stripePriceId: null, stripeProductId: null }),
       },
       { new: true }
     );
@@ -236,35 +282,12 @@ exports.enrollInCourse = async (req, res) => {
 
     // ── Subscription flow ──────────────────────────────────────────────────
     if (course.isSubscription) {
-      let priceId = course.stripePriceId;
-
-      // Validate the cached price still exists in Stripe
-      if (priceId) {
-        try {
-          await stripe.prices.retrieve(priceId);
-        } catch {
-          priceId = null;
-        }
-      }
-
-      // TRANSFER THIS LOGIC TO CREATE COURSE HANDLER
-      if (!priceId) {
-        const product = await stripe.products.create({
-          name: course.title,
-          description: course.shortDescription || course.instructor || "",
-        });
-        const price = await stripe.prices.create({
-          product: product.id,
-          unit_amount: Math.round(course.price * 100),
-          currency: "gbp",
-          recurring: { interval: course.billingInterval || "month" },
-        });
-        priceId = price.id;
-        await Course.findByIdAndUpdate(course._id, {
-          stripeProductId: product.id,
-          stripePriceId: priceId,
+      if (!course.stripePriceId) {
+        return res.status(500).json({
+          error: "This course is missing its Stripe price configuration. Please contact an admin.",
         });
       }
+      const priceId = course.stripePriceId;
 
       const session = await stripe.checkout.sessions.create({
         customer_email: email,
@@ -366,27 +389,28 @@ exports.handleEnrollmentSuccess = async (req, res) => {
     if (existing)
       return res.redirect(`${process.env.FRONT_END_URL}course-confirmation?courseId=${courseId}`);
 
-    // ── Reactivation flow — update existing enrollment with new subscription ──
+    // ── Reactivation flow — atomic update, no enrollment count change ──
     const reactivateId = session.metadata?.reactivateEnrollmentId;
     if (reactivateId) {
-      const enrollment = await CourseEnrollment.findById(reactivateId);
+      const $set = {
+        paymentId: session.id,
+        status: "active",
+        subscriptionStatus: session.subscription?.status || "active",
+      };
+
+      if (session.subscription) {
+        const sub = session.subscription;
+        $set.subscriptionId = sub.id;
+        $set.currentPeriodEnd = resolveCurrentPeriodEnd(sub);
+      }
+
+      const enrollment = await CourseEnrollment.findByIdAndUpdate(
+        reactivateId,
+        { $set, $unset: { pendingSessionId: 1 } },
+        { new: true }
+      );
+
       if (enrollment) {
-        enrollment.paymentId = session.id;
-        enrollment.status = "active";
-        enrollment.subscriptionStatus = session.subscription?.status || "active";
-        enrollment.pendingSessionId = undefined;
-
-        if (session.subscription) {
-          const sub = session.subscription;
-          enrollment.subscriptionId = sub.id;
-          const periodTs = getSubPeriodEnd(sub);
-          if (periodTs) {
-            enrollment.currentPeriodEnd = new Date(periodTs * 1000);
-          }
-        }
-
-        await enrollment.save();
-
         const course = await Course.findById(courseId);
         if (course) {
           sendCourseEnrollmentEmail({
@@ -402,64 +426,72 @@ exports.handleEnrollmentSuccess = async (req, res) => {
       }
     }
 
-    const pendingEnrollment = await CourseEnrollment.findOne({
-      pendingSessionId: session.id,
-      status: "pending",
-    });
-
     const email = session.metadata?.email;
-    const participants = pendingEnrollment?.participants || [];
-    const count = participants.length || parseInt(session.metadata?.count || "1", 10);
     const isSubscription = session.metadata?.isSubscription === "true";
 
-    if (pendingEnrollment) {
-      pendingEnrollment.paymentId = session.id;
-      pendingEnrollment.status = isSubscription ? "active" : "paid";
-      pendingEnrollment.pendingSessionId = undefined;
-
-      if (isSubscription && session.subscription) {
-        const sub = session.subscription;
-        pendingEnrollment.subscriptionId = sub.id;
-        pendingEnrollment.subscriptionStatus = sub.status;
-        const periodTs = getSubPeriodEnd(sub);
-        if (periodTs) {
-          pendingEnrollment.currentPeriodEnd = new Date(periodTs * 1000);
+    // ── Transaction: update/create enrollment + increment course count ──
+    const mongoSession = await mongoose.startSession();
+    let finalEnrollment;
+    try {
+      await mongoSession.withTransaction(async () => {
+        // Build subscription fields if applicable
+        const subFields = {};
+        if (isSubscription && session.subscription) {
+          const sub = session.subscription;
+          subFields.subscriptionId = sub.id;
+          subFields.subscriptionStatus = sub.status;
+          subFields.currentPeriodEnd = resolveCurrentPeriodEnd(sub);
         }
-      }
 
-      await pendingEnrollment.save();
-    } else {
-      // Fallback: create enrollment if no pending record found
-      const user = await User.findOne({ email });
-      const enrollmentData = {
-        courseId,
-        user: user?._id ?? null,
-        buyerEmail: email,
-        buyerPhone: session.metadata?.phone || "N/A",
-        paymentId: session.id,
-        status: isSubscription ? "active" : "paid",
-        participants,
-      };
+        // Try to atomically update a pending enrollment first
+        finalEnrollment = await CourseEnrollment.findOneAndUpdate(
+          { pendingSessionId: session.id, status: "pending" },
+          {
+            $set: {
+              paymentId: session.id,
+              status: isSubscription ? "active" : "paid",
+              ...subFields,
+            },
+            $unset: { pendingSessionId: 1 },
+          },
+          { new: true, session: mongoSession }
+        );
 
-      if (isSubscription && session.subscription) {
-        const sub = session.subscription;
-        enrollmentData.subscriptionId = sub.id;
-        enrollmentData.subscriptionStatus = sub.status;
-        const periodTs = getSubPeriodEnd(sub);
-        if (periodTs) {
-          enrollmentData.currentPeriodEnd = new Date(periodTs * 1000);
+        let count;
+        if (finalEnrollment) {
+          count = finalEnrollment.participants?.length || 1;
+        } else {
+          // Fallback: create enrollment if no pending record found
+          const user = await User.findOne({ email }, null, { session: mongoSession });
+          const enrollmentData = {
+            courseId,
+            user: user?._id ?? null,
+            buyerEmail: email,
+            buyerPhone: session.metadata?.phone || "N/A",
+            paymentId: session.id,
+            status: isSubscription ? "active" : "paid",
+            participants: [],
+            ...subFields,
+          };
+
+          const enrollment = new CourseEnrollment(enrollmentData);
+          await enrollment.save({ session: mongoSession });
+          finalEnrollment = enrollment;
+          count = parseInt(session.metadata?.count || "1", 10);
         }
-      }
 
-      const enrollment = new CourseEnrollment(enrollmentData);
-      await enrollment.save();
+        await Course.findByIdAndUpdate(
+          courseId,
+          { $inc: { currentEnrollment: count } },
+          { session: mongoSession }
+        );
+      });
+    } finally {
+      await mongoSession.endSession();
     }
-    // This needs to be atomicized with enrollment creation to avoid race conditions
-    await Course.findByIdAndUpdate(courseId, { $inc: { currentEnrollment: count } });
 
+    // Fire-and-forget: send confirmation email
     const course = await Course.findById(courseId);
-    const finalEnrollment =
-      pendingEnrollment || (await CourseEnrollment.findOne({ paymentId: session.id }));
     if (course && finalEnrollment) {
       sendCourseEnrollmentEmail({ buyerEmail: email, course, enrollment: finalEnrollment }).catch(
         (err) => console.error("Failed to send course enrollment email:", err)
@@ -522,12 +554,11 @@ exports.cancelSubscription = async (req, res) => {
       cancel_at_period_end: true,
     });
 
-    const periodTs = getSubPeriodEnd(updatedSub);
-    const periodEnd = periodTs ? new Date(periodTs * 1000) : null;
+    const periodEnd = resolveCurrentPeriodEnd(updatedSub);
 
     await CourseEnrollment.findByIdAndUpdate(enrollmentId, {
       subscriptionStatus: "cancelled",
-      ...(periodEnd && { currentPeriodEnd: periodEnd }),
+      currentPeriodEnd: periodEnd,
     });
     // this could use better handling and let the user know theres no course with that courseId (if necessary)
     const course = await Course.findById(enrollment.courseId);
@@ -596,12 +627,11 @@ exports.reactivateSubscription = async (req, res) => {
         cancel_at_period_end: false,
       });
 
-      const periodTs = getSubPeriodEnd(updatedSub);
-      const periodEnd = periodTs ? new Date(periodTs * 1000) : null;
+      const periodEnd = resolveCurrentPeriodEnd(updatedSub);
 
       await CourseEnrollment.findByIdAndUpdate(enrollmentId, {
         subscriptionStatus: "active",
-        ...(periodEnd && { currentPeriodEnd: periodEnd }),
+        currentPeriodEnd: periodEnd,
       });
 
       return res.json({
@@ -615,31 +645,12 @@ exports.reactivateSubscription = async (req, res) => {
     const course = await Course.findById(enrollment.courseId);
     if (!course) return res.status(404).json({ error: "Course not found" });
 
-    let priceId = course.stripePriceId;
-    if (priceId) {
-      try {
-        await stripe.prices.retrieve(priceId);
-      } catch {
-        priceId = null;
-      }
-    }
-    if (!priceId) {
-      const product = await stripe.products.create({
-        name: course.title,
-        description: course.shortDescription || course.instructor || "",
-      });
-      const price = await stripe.prices.create({
-        product: product.id,
-        unit_amount: Math.round(course.price * 100),
-        currency: "gbp",
-        recurring: { interval: course.billingInterval || "month" },
-      });
-      priceId = price.id;
-      await Course.findByIdAndUpdate(course._id, {
-        stripeProductId: product.id,
-        stripePriceId: priceId,
+    if (!course.stripePriceId) {
+      return res.status(500).json({
+        error: "This course is missing its Stripe price configuration. Please contact an admin.",
       });
     }
+    const priceId = course.stripePriceId;
 
     const count = enrollment.participants?.length || 1;
 
@@ -755,16 +766,26 @@ exports.addParticipant = async (req, res) => {
       return res.status(403).json({ error: "Not authorised" });
     }
 
-    const course = await Course.findById(enrollment.courseId);
-    if (course.maxEnrollment && course.currentEnrollment >= course.maxEnrollment) {
-      return res.status(400).json({ error: "Course is full" });
+    // Duplicate check — same name + email already on this enrollment
+    const trimmedName = name.trim();
+    const trimmedEmail = email?.trim().toLowerCase();
+    const isDuplicate = enrollment.participants.some(
+      (p) => p.name === trimmedName && (trimmedEmail ? p.email === trimmedEmail : !p.email)
+    );
+    if (isDuplicate) {
+      return res
+        .status(409)
+        .json({ error: "A participant with this name and email already exists" });
     }
 
+    // Update Stripe subscription quantity first (external call, before transaction)
+    let previousQuantity;
     if (enrollment.subscriptionId && enrollment.subscriptionStatus !== "cancelled") {
       try {
         const subscription = await stripe.subscriptions.retrieve(enrollment.subscriptionId);
         const subItem = subscription.items.data[0];
         if (subItem) {
+          previousQuantity = subItem.quantity;
           await stripe.subscriptionItems.update(subItem.id, {
             quantity: enrollment.participants.length + 1,
           });
@@ -777,20 +798,64 @@ exports.addParticipant = async (req, res) => {
       }
     }
 
-    enrollment.participants.push({
-      name: name.trim(),
-      age: age || undefined,
-      email: email || undefined,
-    });
-    await enrollment.save({ validateModifiedOnly: true });
+    // Atomic: capacity check + push participant + increment course count
+    const mongoSession = await mongoose.startSession();
+    let updatedEnrollment;
+    try {
+      await mongoSession.withTransaction(async () => {
+        // Atomic capacity guard — allows unlimited if maxEnrollment is null/unset
+        const course = await Course.findOneAndUpdate(
+          {
+            _id: enrollment.courseId,
+            $or: [
+              { maxEnrollment: null },
+              { $expr: { $lt: ["$currentEnrollment", "$maxEnrollment"] } },
+            ],
+          },
+          { $inc: { currentEnrollment: 1 } },
+          { session: mongoSession, new: true }
+        );
+        if (!course) throw new Error("Course is full");
 
-    await Course.findByIdAndUpdate(enrollment.courseId, {
-      $inc: { currentEnrollment: 1 },
-    });
+        updatedEnrollment = await CourseEnrollment.findByIdAndUpdate(
+          enrollmentId,
+          {
+            $push: {
+              participants: {
+                name: trimmedName,
+                age: age || undefined,
+                email: trimmedEmail || undefined,
+              },
+            },
+          },
+          { new: true, session: mongoSession }
+        );
+      });
+    } catch (txErr) {
+      // Revert Stripe quantity if the transaction failed
+      if (previousQuantity !== undefined) {
+        try {
+          const sub = await stripe.subscriptions.retrieve(enrollment.subscriptionId);
+          const subItem = sub.items.data[0];
+          if (subItem) {
+            await stripe.subscriptionItems.update(subItem.id, { quantity: previousQuantity });
+          }
+        } catch (revertErr) {
+          console.error("Failed to revert Stripe subscription quantity:", revertErr);
+        }
+      }
+
+      if (txErr.message === "Course is full") {
+        return res.status(400).json({ error: "Course is full" });
+      }
+      throw txErr;
+    } finally {
+      await mongoSession.endSession();
+    }
 
     res.json({
-      message: `${name.trim()} has been added to this enrollment.`,
-      participants: enrollment.participants,
+      message: `${trimmedName} has been added to this enrollment.`,
+      participants: updatedEnrollment.participants,
     });
   } catch (err) {
     console.error("Error adding participant:", err);
@@ -809,27 +874,23 @@ exports.removeParticipant = async (req, res) => {
       return res.status(400).json({ error: "Invalid enrollment ID" });
     }
 
-    const { participantIndex: rawIndex } = req.body;
-    const participantIndex = Number(rawIndex);
+    const { participantId } = req.body;
+    if (!participantId || !mongoose.Types.ObjectId.isValid(participantId)) {
+      return res.status(400).json({ error: "Valid participantId is required" });
+    }
 
     const enrollment = await CourseEnrollment.findById(enrollmentId);
     if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
 
-    const participantOwnerId = enrollment.user?.toString();
-    const isParticipantOwner = participantOwnerId
-      ? participantOwnerId === req.user.id
-      : enrollment.buyerEmail === req.user.email;
-    if (!isParticipantOwner && req.user.role !== "admin") {
+    const ownerId = enrollment.user?.toString();
+    const isOwner = ownerId ? ownerId === req.user.id : enrollment.buyerEmail === req.user.email;
+    if (!isOwner && req.user.role !== "admin") {
       return res.status(403).json({ error: "Not authorised" });
     }
 
-    if (
-      rawIndex == null ||
-      !Number.isInteger(participantIndex) ||
-      participantIndex < 0 ||
-      participantIndex >= enrollment.participants.length
-    ) {
-      return res.status(400).json({ error: "Invalid participant index" });
+    const participant = enrollment.participants.id(participantId);
+    if (!participant) {
+      return res.status(404).json({ error: "Participant not found" });
     }
 
     if (enrollment.participants.length <= 1) {
@@ -845,13 +906,16 @@ exports.removeParticipant = async (req, res) => {
       });
     }
 
-    const removed = enrollment.participants[participantIndex];
+    const removedName = participant.name;
 
+    // Update Stripe subscription quantity first (external call, before transaction)
+    let previousQuantity;
     if (enrollment.subscriptionId && enrollment.subscriptionStatus !== "cancelled") {
       try {
         const subscription = await stripe.subscriptions.retrieve(enrollment.subscriptionId);
         const subItem = subscription.items.data[0];
         if (subItem) {
+          previousQuantity = subItem.quantity;
           await stripe.subscriptionItems.update(subItem.id, {
             quantity: enrollment.participants.length - 1,
           });
@@ -864,20 +928,106 @@ exports.removeParticipant = async (req, res) => {
       }
     }
 
-    enrollment.participants.splice(participantIndex, 1);
-    await enrollment.save({ validateModifiedOnly: true });
+    // Atomic: $pull participant + decrement course count in a transaction
+    const mongoSession = await mongoose.startSession();
+    let updatedEnrollment;
+    try {
+      await mongoSession.withTransaction(async () => {
+        updatedEnrollment = await CourseEnrollment.findByIdAndUpdate(
+          enrollmentId,
+          { $pull: { participants: { _id: participantId } } },
+          { new: true, session: mongoSession }
+        );
 
-    await Course.findByIdAndUpdate(enrollment.courseId, {
-      $inc: { currentEnrollment: -1 },
-    });
+        await Course.findByIdAndUpdate(
+          enrollment.courseId,
+          { $inc: { currentEnrollment: -1 } },
+          { session: mongoSession }
+        );
+      });
+    } catch (txErr) {
+      // Revert Stripe quantity if the transaction failed
+      if (previousQuantity !== undefined) {
+        try {
+          const sub = await stripe.subscriptions.retrieve(enrollment.subscriptionId);
+          const subItem = sub.items.data[0];
+          if (subItem) {
+            await stripe.subscriptionItems.update(subItem.id, { quantity: previousQuantity });
+          }
+        } catch (revertErr) {
+          console.error("Failed to revert Stripe subscription quantity:", revertErr);
+        }
+      }
+      throw txErr;
+    } finally {
+      await mongoSession.endSession();
+    }
 
     res.json({
-      message: `${removed.name} has been removed from this enrollment.`,
-      participants: enrollment.participants,
+      message: `${removedName} has been removed from this enrollment.`,
+      participants: updatedEnrollment.participants,
     });
   } catch (err) {
     console.error("Error removing participant:", err);
     res.status(500).json({ error: "Failed to remove participant" });
+  }
+};
+
+// ─── PUT /courses/enrollments/:enrollmentId/participants/:participantId ──────
+// Edits a single participant's details on an enrollment.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.editParticipant = async (req, res) => {
+  try {
+    const { enrollmentId, participantId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(enrollmentId)) {
+      return res.status(400).json({ error: "Invalid enrollment ID" });
+    }
+    if (!mongoose.Types.ObjectId.isValid(participantId)) {
+      return res.status(400).json({ error: "Invalid participant ID" });
+    }
+
+    const { name, age, email } = req.body;
+
+    const enrollment = await CourseEnrollment.findById(enrollmentId);
+    if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
+
+    const ownerId = enrollment.user?.toString();
+    const isOwner = ownerId ? ownerId === req.user.id : enrollment.buyerEmail === req.user.email;
+    if (!isOwner && req.user.role !== "admin") {
+      return res.status(403).json({ error: "Not authorised" });
+    }
+
+    const participant = enrollment.participants.id(participantId);
+    if (!participant) {
+      return res.status(404).json({ error: "Participant not found" });
+    }
+
+    // Build $set for only provided fields
+    const $set = {};
+    if (name !== undefined) {
+      if (!name.trim()) return res.status(400).json({ error: "Name cannot be empty" });
+      $set["participants.$.name"] = name.trim();
+    }
+    if (age !== undefined) $set["participants.$.age"] = age || null;
+    if (email !== undefined) $set["participants.$.email"] = email?.trim().toLowerCase() || null;
+
+    if (Object.keys($set).length === 0) {
+      return res.status(400).json({ error: "No fields to update" });
+    }
+
+    const updated = await CourseEnrollment.findOneAndUpdate(
+      { _id: enrollmentId, "participants._id": participantId },
+      { $set },
+      { new: true }
+    );
+
+    res.json({
+      message: "Participant updated successfully.",
+      participants: updated.participants,
+    });
+  } catch (err) {
+    console.error("Error editing participant:", err);
+    res.status(500).json({ error: "Failed to edit participant" });
   }
 };
 
@@ -898,18 +1048,33 @@ exports.handleWebhook = async (req, res) => {
   }
 
   try {
+    // Idempotency — skip if this event was already processed
+    const alreadyProcessed = await WebhookEvent.findOne({ stripeEventId: event.id });
+    if (alreadyProcessed) {
+      return res.json({ received: true, duplicate: true });
+    }
+
+    const eventTimestamp = event.created;
+
     switch (event.type) {
       case "invoice.payment_succeeded": {
         const invoice = event.data.object;
         if (invoice.subscription) {
-          //no need to retrieve with Stripe API since we expand subscription in the webhook config
           const sub = await stripe.subscriptions.retrieve(invoice.subscription);
+          // Only apply if this event is newer than the last one we processed
           await CourseEnrollment.findOneAndUpdate(
-            { subscriptionId: invoice.subscription },
+            {
+              subscriptionId: invoice.subscription,
+              $or: [
+                { lastStripeEventTimestamp: null },
+                { lastStripeEventTimestamp: { $lt: eventTimestamp } },
+              ],
+            },
             {
               subscriptionStatus: "active",
-              currentPeriodEnd: new Date(getSubPeriodEnd(sub) * 1000),
+              currentPeriodEnd: resolveCurrentPeriodEnd(sub),
               status: "active",
+              lastStripeEventTimestamp: eventTimestamp,
             }
           );
         }
@@ -919,28 +1084,68 @@ exports.handleWebhook = async (req, res) => {
         const invoice = event.data.object;
         if (invoice.subscription) {
           await CourseEnrollment.findOneAndUpdate(
-            { subscriptionId: invoice.subscription },
-            { subscriptionStatus: "past_due", status: "past_due" }
+            {
+              subscriptionId: invoice.subscription,
+              $or: [
+                { lastStripeEventTimestamp: null },
+                { lastStripeEventTimestamp: { $lt: eventTimestamp } },
+              ],
+            },
+            {
+              subscriptionStatus: "past_due",
+              status: "past_due",
+              lastStripeEventTimestamp: eventTimestamp,
+            }
           );
         }
         break;
       }
       case "customer.subscription.deleted": {
         const sub = event.data.object;
-        const enrollment = await CourseEnrollment.findOneAndUpdate(
-          { subscriptionId: sub.id },
-          { subscriptionStatus: "cancelled", status: "cancelled" },
-          { new: false }
-        );
-        if (enrollment /*enrollment.status !== "cancelled" */) {
-          const count = enrollment.participants?.length || 1;
-          await Course.findByIdAndUpdate(enrollment.courseId, {
-            $inc: { currentEnrollment: -count },
+
+        // Transaction: update enrollment status + decrement course count atomically
+        const mongoSession = await mongoose.startSession();
+        try {
+          await mongoSession.withTransaction(async () => {
+            const enrollment = await CourseEnrollment.findOneAndUpdate(
+              {
+                subscriptionId: sub.id,
+                status: { $ne: "cancelled" },
+                $or: [
+                  { lastStripeEventTimestamp: null },
+                  { lastStripeEventTimestamp: { $lt: eventTimestamp } },
+                ],
+              },
+              {
+                subscriptionStatus: "cancelled",
+                status: "cancelled",
+                lastStripeEventTimestamp: eventTimestamp,
+              },
+              { new: false, session: mongoSession }
+            );
+
+            if (enrollment) {
+              const count = enrollment.participants?.length || 1;
+              await Course.findByIdAndUpdate(
+                enrollment.courseId,
+                { $inc: { currentEnrollment: -count } },
+                { session: mongoSession }
+              );
+            }
           });
+        } finally {
+          await mongoSession.endSession();
         }
         break;
       }
     }
+
+    // Record this event as processed
+    await WebhookEvent.create({
+      stripeEventId: event.id,
+      eventType: event.type,
+    });
+
     res.json({ received: true });
   } catch (err) {
     console.error("Webhook handler error:", err);
