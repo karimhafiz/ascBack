@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Course = require("../models/Course");
 const CourseEnrollment = require("../models/CourseEnrollment");
 const User = require("../models/User");
+const WebhookEvent = require("../models/WebhookEvent");
 const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
 const {
   sendCourseEnrollmentEmail,
@@ -1047,18 +1048,33 @@ exports.handleWebhook = async (req, res) => {
   }
 
   try {
+    // Idempotency — skip if this event was already processed
+    const alreadyProcessed = await WebhookEvent.findOne({ stripeEventId: event.id });
+    if (alreadyProcessed) {
+      return res.json({ received: true, duplicate: true });
+    }
+
+    const eventTimestamp = event.created;
+
     switch (event.type) {
       case "invoice.payment_succeeded": {
         const invoice = event.data.object;
         if (invoice.subscription) {
-          //no need to retrieve with Stripe API since we expand subscription in the webhook config
           const sub = await stripe.subscriptions.retrieve(invoice.subscription);
+          // Only apply if this event is newer than the last one we processed
           await CourseEnrollment.findOneAndUpdate(
-            { subscriptionId: invoice.subscription },
+            {
+              subscriptionId: invoice.subscription,
+              $or: [
+                { lastStripeEventTimestamp: null },
+                { lastStripeEventTimestamp: { $lt: eventTimestamp } },
+              ],
+            },
             {
               subscriptionStatus: "active",
               currentPeriodEnd: resolveCurrentPeriodEnd(sub),
               status: "active",
+              lastStripeEventTimestamp: eventTimestamp,
             }
           );
         }
@@ -1068,28 +1084,68 @@ exports.handleWebhook = async (req, res) => {
         const invoice = event.data.object;
         if (invoice.subscription) {
           await CourseEnrollment.findOneAndUpdate(
-            { subscriptionId: invoice.subscription },
-            { subscriptionStatus: "past_due", status: "past_due" }
+            {
+              subscriptionId: invoice.subscription,
+              $or: [
+                { lastStripeEventTimestamp: null },
+                { lastStripeEventTimestamp: { $lt: eventTimestamp } },
+              ],
+            },
+            {
+              subscriptionStatus: "past_due",
+              status: "past_due",
+              lastStripeEventTimestamp: eventTimestamp,
+            }
           );
         }
         break;
       }
       case "customer.subscription.deleted": {
         const sub = event.data.object;
-        const enrollment = await CourseEnrollment.findOneAndUpdate(
-          { subscriptionId: sub.id },
-          { subscriptionStatus: "cancelled", status: "cancelled" },
-          { new: false }
-        );
-        if (enrollment /*enrollment.status !== "cancelled" */) {
-          const count = enrollment.participants?.length || 1;
-          await Course.findByIdAndUpdate(enrollment.courseId, {
-            $inc: { currentEnrollment: -count },
+
+        // Transaction: update enrollment status + decrement course count atomically
+        const mongoSession = await mongoose.startSession();
+        try {
+          await mongoSession.withTransaction(async () => {
+            const enrollment = await CourseEnrollment.findOneAndUpdate(
+              {
+                subscriptionId: sub.id,
+                status: { $ne: "cancelled" },
+                $or: [
+                  { lastStripeEventTimestamp: null },
+                  { lastStripeEventTimestamp: { $lt: eventTimestamp } },
+                ],
+              },
+              {
+                subscriptionStatus: "cancelled",
+                status: "cancelled",
+                lastStripeEventTimestamp: eventTimestamp,
+              },
+              { new: false, session: mongoSession }
+            );
+
+            if (enrollment) {
+              const count = enrollment.participants?.length || 1;
+              await Course.findByIdAndUpdate(
+                enrollment.courseId,
+                { $inc: { currentEnrollment: -count } },
+                { session: mongoSession }
+              );
+            }
           });
+        } finally {
+          await mongoSession.endSession();
         }
         break;
       }
     }
+
+    // Record this event as processed
+    await WebhookEvent.create({
+      stripeEventId: event.id,
+      eventType: event.type,
+    });
+
     res.json({ received: true });
   } catch (err) {
     console.error("Webhook handler error:", err);
