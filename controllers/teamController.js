@@ -134,21 +134,24 @@ exports.handlePaymentSuccess = async (req, res) => {
       return res.redirect(`${process.env.FRONT_END_URL}events`);
     }
 
-    const team = await Team.findByIdAndUpdate(
-      //right here
-      teamId,
+    // Atomic: only flip unpaid → paid (idempotent on refresh)
+    const team = await Team.findOneAndUpdate(
+      { _id: teamId, paid: false },
       { paid: true, paymentId: session.id },
       { new: true }
     );
 
-    // Send confirmation emails to manager + members in the background
-    if (team) {
-      const event = await Event.findById(team.event);
-      if (event) {
-        sendTeamRegistrationEmail({ team, event }).catch((err) =>
-          console.error("Team registration email error:", err)
-        );
-      }
+    if (!team) {
+      // Already paid (page refresh) — just redirect, no duplicate email
+      return res.redirect(`${process.env.FRONT_END_URL}team-confirmation?teamId=${teamId}`);
+    }
+
+    // Send confirmation emails in the background
+    const event = await Event.findById(team.event);
+    if (event) {
+      sendTeamRegistrationEmail({ team, event }).catch((err) =>
+        console.error("Team registration email error:", err)
+      );
     }
 
     res.redirect(`${process.env.FRONT_END_URL}team-confirmation?teamId=${teamId}`);
