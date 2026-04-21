@@ -21,10 +21,11 @@ exports.getTeam = async (req, res) => {
   }
 };
 
-// Sign up a team for an event.
-// If an unpaid team already exists for this manager + event, reuse it
-// instead of creating a duplicate (handles user going back from Stripe).
-exports.signupTeam = async (req, res) => {
+// ─── POST /teams/event/:eventId/register ─────────────────────────────────────
+// Single endpoint: validate → upsert team → if free mark paid, else Stripe checkout.
+// Replaces the old signupTeam + processTeamPayment two-step flow.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.registerTeam = async (req, res) => {
   try {
     const { name, members, manager } = req.body;
     const { eventId } = req.params;
@@ -55,58 +56,34 @@ exports.signupTeam = async (req, res) => {
       return res.status(400).json({ error: "This event does not accept team registrations" });
     }
 
-    // Check for an existing unpaid team from this manager for this event
-    const existing = await Team.findOne({
-      event: eventId,
-      "manager.email": manager.email,
-      paid: false,
-    });
+    // Upsert: find existing unpaid team for this manager + event, or create new
+    const team = await Team.findOneAndUpdate(
+      { event: eventId, "manager.email": manager.email, paid: false },
+      {
+        $set: {
+          name: name.trim(),
+          members,
+          manager,
+          paid: false,
+        },
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
 
-    if (existing) {
-      // Update it with fresh details in case they changed anything
-      existing.name = name.trim();
-      existing.members = members;
-      existing.manager = manager;
-      await existing.save();
-      return res.status(200).json({ message: "Existing team updated", team: existing });
+    // Free tournament — mark paid immediately and send email
+    const amount = event.ticketPrice || 0;
+    if (amount === 0) {
+      team.paid = true;
+      await team.save();
+
+      sendTeamRegistrationEmail({ team, event }).catch((err) =>
+        console.error("Team registration email error:", err)
+      );
+
+      return res.json({ message: "Team registered successfully", team });
     }
 
-    const team = new Team({
-      name: name.trim(),
-      members,
-      event: eventId,
-      manager,
-      paid: false,
-      paymentId: null,
-    });
-
-    await team.save();
-    res.status(201).json({ message: "Team signed up successfully", team });
-  } catch (error) {
-    console.error("Error signing up team:", error);
-    res.status(500).json({ error: "Failed to sign up team" });
-  }
-};
-
-// ─── POST /teams/:teamId/pay ──────────────────────────────────────────────────
-// Creates a Stripe Checkout session for a team registration fee.
-// cancel_url goes through our backend so we can delete the unpaid team cleanly.
-// ─────────────────────────────────────────────────────────────────────────────
-exports.processTeamPayment = async (req, res) => {
-  try {
-    const { teamId } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(teamId)) {
-      return res.status(400).json({ error: "Invalid team ID" });
-    }
-
-    const team = await Team.findById(teamId);
-    if (!team) return res.status(404).json({ error: "Team not found" });
-
-    const event = await Event.findById(team.event);
-    if (!event) return res.status(404).json({ error: "Event not found" });
-
-    const amount = event.ticketPrice || 50;
-
+    // Paid tournament — create Stripe checkout session
     const session = await stripe.checkout.sessions.create({
       customer_email: team.manager.email,
       line_items: [
@@ -123,18 +100,18 @@ exports.processTeamPayment = async (req, res) => {
         },
       ],
       mode: "payment",
-      success_url: `${process.env.BACK_END_URL}teams/${teamId}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.BACK_END_URL}teams/${teamId}/cancel`,
+      success_url: `${process.env.BACK_END_URL}teams/${team._id}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.BACK_END_URL}teams/${team._id}/cancel`,
       metadata: {
-        teamId: teamId.toString(),
-        eventId: team.event.toString(),
+        teamId: team._id.toString(),
+        eventId: eventId.toString(),
       },
     });
 
     res.json({ url: session.url });
   } catch (error) {
-    console.error("Team payment error:", error);
-    res.status(500).json({ error: "Failed to process team payment" });
+    console.error("Team registration error:", error);
+    res.status(500).json({ error: "Failed to register team" });
   }
 };
 
