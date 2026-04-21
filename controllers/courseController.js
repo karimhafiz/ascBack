@@ -765,16 +765,26 @@ exports.addParticipant = async (req, res) => {
       return res.status(403).json({ error: "Not authorised" });
     }
 
-    const course = await Course.findById(enrollment.courseId);
-    if (course.maxEnrollment && course.currentEnrollment >= course.maxEnrollment) {
-      return res.status(400).json({ error: "Course is full" });
+    // Duplicate check — same name + email already on this enrollment
+    const trimmedName = name.trim();
+    const trimmedEmail = email?.trim().toLowerCase();
+    const isDuplicate = enrollment.participants.some(
+      (p) => p.name === trimmedName && (trimmedEmail ? p.email === trimmedEmail : !p.email)
+    );
+    if (isDuplicate) {
+      return res
+        .status(409)
+        .json({ error: "A participant with this name and email already exists" });
     }
 
+    // Update Stripe subscription quantity first (external call, before transaction)
+    let previousQuantity;
     if (enrollment.subscriptionId && enrollment.subscriptionStatus !== "cancelled") {
       try {
         const subscription = await stripe.subscriptions.retrieve(enrollment.subscriptionId);
         const subItem = subscription.items.data[0];
         if (subItem) {
+          previousQuantity = subItem.quantity;
           await stripe.subscriptionItems.update(subItem.id, {
             quantity: enrollment.participants.length + 1,
           });
@@ -787,20 +797,64 @@ exports.addParticipant = async (req, res) => {
       }
     }
 
-    enrollment.participants.push({
-      name: name.trim(),
-      age: age || undefined,
-      email: email || undefined,
-    });
-    await enrollment.save({ validateModifiedOnly: true });
+    // Atomic: capacity check + push participant + increment course count
+    const mongoSession = await mongoose.startSession();
+    let updatedEnrollment;
+    try {
+      await mongoSession.withTransaction(async () => {
+        // Atomic capacity guard — allows unlimited if maxEnrollment is null/unset
+        const course = await Course.findOneAndUpdate(
+          {
+            _id: enrollment.courseId,
+            $or: [
+              { maxEnrollment: null },
+              { $expr: { $lt: ["$currentEnrollment", "$maxEnrollment"] } },
+            ],
+          },
+          { $inc: { currentEnrollment: 1 } },
+          { session: mongoSession, new: true }
+        );
+        if (!course) throw new Error("Course is full");
 
-    await Course.findByIdAndUpdate(enrollment.courseId, {
-      $inc: { currentEnrollment: 1 },
-    });
+        updatedEnrollment = await CourseEnrollment.findByIdAndUpdate(
+          enrollmentId,
+          {
+            $push: {
+              participants: {
+                name: trimmedName,
+                age: age || undefined,
+                email: trimmedEmail || undefined,
+              },
+            },
+          },
+          { new: true, session: mongoSession }
+        );
+      });
+    } catch (txErr) {
+      // Revert Stripe quantity if the transaction failed
+      if (previousQuantity !== undefined) {
+        try {
+          const sub = await stripe.subscriptions.retrieve(enrollment.subscriptionId);
+          const subItem = sub.items.data[0];
+          if (subItem) {
+            await stripe.subscriptionItems.update(subItem.id, { quantity: previousQuantity });
+          }
+        } catch (revertErr) {
+          console.error("Failed to revert Stripe subscription quantity:", revertErr);
+        }
+      }
+
+      if (txErr.message === "Course is full") {
+        return res.status(400).json({ error: "Course is full" });
+      }
+      throw txErr;
+    } finally {
+      await mongoSession.endSession();
+    }
 
     res.json({
-      message: `${name.trim()} has been added to this enrollment.`,
-      participants: enrollment.participants,
+      message: `${trimmedName} has been added to this enrollment.`,
+      participants: updatedEnrollment.participants,
     });
   } catch (err) {
     console.error("Error adding participant:", err);
