@@ -388,24 +388,28 @@ exports.handleEnrollmentSuccess = async (req, res) => {
     if (existing)
       return res.redirect(`${process.env.FRONT_END_URL}course-confirmation?courseId=${courseId}`);
 
-    // ── Reactivation flow — update existing enrollment with new subscription ──
+    // ── Reactivation flow — atomic update, no enrollment count change ──
     const reactivateId = session.metadata?.reactivateEnrollmentId;
     if (reactivateId) {
-      const enrollment = await CourseEnrollment.findById(reactivateId);
+      const $set = {
+        paymentId: session.id,
+        status: "active",
+        subscriptionStatus: session.subscription?.status || "active",
+      };
+
+      if (session.subscription) {
+        const sub = session.subscription;
+        $set.subscriptionId = sub.id;
+        $set.currentPeriodEnd = resolveCurrentPeriodEnd(sub);
+      }
+
+      const enrollment = await CourseEnrollment.findByIdAndUpdate(
+        reactivateId,
+        { $set, $unset: { pendingSessionId: 1 } },
+        { new: true }
+      );
+
       if (enrollment) {
-        enrollment.paymentId = session.id;
-        enrollment.status = "active";
-        enrollment.subscriptionStatus = session.subscription?.status || "active";
-        enrollment.pendingSessionId = undefined;
-
-        if (session.subscription) {
-          const sub = session.subscription;
-          enrollment.subscriptionId = sub.id;
-          enrollment.currentPeriodEnd = resolveCurrentPeriodEnd(sub);
-        }
-
-        await enrollment.save();
-
         const course = await Course.findById(courseId);
         if (course) {
           sendCourseEnrollmentEmail({
@@ -421,58 +425,72 @@ exports.handleEnrollmentSuccess = async (req, res) => {
       }
     }
 
-    const pendingEnrollment = await CourseEnrollment.findOne({
-      pendingSessionId: session.id,
-      status: "pending",
-    });
-
     const email = session.metadata?.email;
-    const participants = pendingEnrollment?.participants || [];
-    const count = participants.length || parseInt(session.metadata?.count || "1", 10);
     const isSubscription = session.metadata?.isSubscription === "true";
 
-    if (pendingEnrollment) {
-      pendingEnrollment.paymentId = session.id;
-      pendingEnrollment.status = isSubscription ? "active" : "paid";
-      pendingEnrollment.pendingSessionId = undefined;
+    // ── Transaction: update/create enrollment + increment course count ──
+    const mongoSession = await mongoose.startSession();
+    let finalEnrollment;
+    try {
+      await mongoSession.withTransaction(async () => {
+        // Build subscription fields if applicable
+        const subFields = {};
+        if (isSubscription && session.subscription) {
+          const sub = session.subscription;
+          subFields.subscriptionId = sub.id;
+          subFields.subscriptionStatus = sub.status;
+          subFields.currentPeriodEnd = resolveCurrentPeriodEnd(sub);
+        }
 
-      if (isSubscription && session.subscription) {
-        const sub = session.subscription;
-        pendingEnrollment.subscriptionId = sub.id;
-        pendingEnrollment.subscriptionStatus = sub.status;
-        pendingEnrollment.currentPeriodEnd = resolveCurrentPeriodEnd(sub);
-      }
+        // Try to atomically update a pending enrollment first
+        finalEnrollment = await CourseEnrollment.findOneAndUpdate(
+          { pendingSessionId: session.id, status: "pending" },
+          {
+            $set: {
+              paymentId: session.id,
+              status: isSubscription ? "active" : "paid",
+              ...subFields,
+            },
+            $unset: { pendingSessionId: 1 },
+          },
+          { new: true, session: mongoSession }
+        );
 
-      await pendingEnrollment.save();
-    } else {
-      // Fallback: create enrollment if no pending record found
-      const user = await User.findOne({ email });
-      const enrollmentData = {
-        courseId,
-        user: user?._id ?? null,
-        buyerEmail: email,
-        buyerPhone: session.metadata?.phone || "N/A",
-        paymentId: session.id,
-        status: isSubscription ? "active" : "paid",
-        participants,
-      };
+        let count;
+        if (finalEnrollment) {
+          count = finalEnrollment.participants?.length || 1;
+        } else {
+          // Fallback: create enrollment if no pending record found
+          const user = await User.findOne({ email }, null, { session: mongoSession });
+          const enrollmentData = {
+            courseId,
+            user: user?._id ?? null,
+            buyerEmail: email,
+            buyerPhone: session.metadata?.phone || "N/A",
+            paymentId: session.id,
+            status: isSubscription ? "active" : "paid",
+            participants: [],
+            ...subFields,
+          };
 
-      if (isSubscription && session.subscription) {
-        const sub = session.subscription;
-        enrollmentData.subscriptionId = sub.id;
-        enrollmentData.subscriptionStatus = sub.status;
-        enrollmentData.currentPeriodEnd = resolveCurrentPeriodEnd(sub);
-      }
+          const enrollment = new CourseEnrollment(enrollmentData);
+          await enrollment.save({ session: mongoSession });
+          finalEnrollment = enrollment;
+          count = parseInt(session.metadata?.count || "1", 10);
+        }
 
-      const enrollment = new CourseEnrollment(enrollmentData);
-      await enrollment.save();
+        await Course.findByIdAndUpdate(
+          courseId,
+          { $inc: { currentEnrollment: count } },
+          { session: mongoSession }
+        );
+      });
+    } finally {
+      await mongoSession.endSession();
     }
-    // This needs to be atomicized with enrollment creation to avoid race conditions
-    await Course.findByIdAndUpdate(courseId, { $inc: { currentEnrollment: count } });
 
+    // Fire-and-forget: send confirmation email
     const course = await Course.findById(courseId);
-    const finalEnrollment =
-      pendingEnrollment || (await CourseEnrollment.findOne({ paymentId: session.id }));
     if (course && finalEnrollment) {
       sendCourseEnrollmentEmail({ buyerEmail: email, course, enrollment: finalEnrollment }).catch(
         (err) => console.error("Failed to send course enrollment email:", err)
