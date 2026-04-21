@@ -14,6 +14,26 @@ function getSubPeriodEnd(sub) {
   return sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
 }
 
+// Create a Stripe product + recurring price for a subscription course,
+// then persist the IDs back to the course document.
+async function createStripeProductAndPrice(course) {
+  const product = await stripe.products.create({
+    name: course.title,
+    description: course.shortDescription || course.instructor || "",
+  });
+  const price = await stripe.prices.create({
+    product: product.id,
+    unit_amount: Math.round(course.price * 100),
+    currency: "gbp",
+    recurring: { interval: course.billingInterval || "month" },
+  });
+  await Course.findByIdAndUpdate(course._id, {
+    stripeProductId: product.id,
+    stripePriceId: price.id,
+  });
+  return { stripeProductId: product.id, stripePriceId: price.id };
+}
+
 const ALLOWED_FIELDS = [
   "title",
   "description",
@@ -88,6 +108,14 @@ exports.createCourse = async (req, res) => {
     });
 
     await course.save();
+
+    // Create Stripe product + price upfront for subscription courses
+    if (course.isSubscription && course.price > 0) {
+      const { stripeProductId, stripePriceId } = await createStripeProductAndPrice(course);
+      course.stripeProductId = stripeProductId;
+      course.stripePriceId = stripePriceId;
+    }
+
     res.status(201).json({ message: "Course created successfully", course });
   } catch (err) {
     console.error("Error creating course:", err);
@@ -122,20 +150,27 @@ exports.updateCourse = async (req, res) => {
     data.enrollmentOpen = data.enrollmentOpen !== false && data.enrollmentOpen !== "false";
     const sanitized = sanitize(data);
 
-    // If billing interval or price changed on a subscription course, invalidate
-    // the cached Stripe price so a fresh one is created on next enrollment.
+    // If billing interval or price changed on a subscription course, create
+    // a new Stripe product + price immediately.
     const intervalChanged =
       sanitized.billingInterval && sanitized.billingInterval !== course.billingInterval;
     const priceChanged = sanitized.price != null && sanitized.price !== course.price;
-    const resetStripe =
-      course.isSubscription && course.stripePriceId && (intervalChanged || priceChanged);
+    const needsNewStripe =
+      course.isSubscription && course.price > 0 && (intervalChanged || priceChanged);
+
+    let stripeFields = {};
+    if (needsNewStripe) {
+      // Apply updated price/interval to a temp object for Stripe creation
+      const updatedCourse = { ...course.toObject(), ...sanitized };
+      stripeFields = await createStripeProductAndPrice(updatedCourse);
+    }
 
     const updated = await Course.findByIdAndUpdate(
       req.params.id,
       {
         ...sanitized,
+        ...stripeFields,
         images: imagePath ? [imagePath] : course.images,
-        ...(resetStripe && { stripePriceId: null, stripeProductId: null }),
       },
       { new: true }
     );
@@ -236,35 +271,12 @@ exports.enrollInCourse = async (req, res) => {
 
     // ── Subscription flow ──────────────────────────────────────────────────
     if (course.isSubscription) {
-      let priceId = course.stripePriceId;
-
-      // Validate the cached price still exists in Stripe
-      if (priceId) {
-        try {
-          await stripe.prices.retrieve(priceId);
-        } catch {
-          priceId = null;
-        }
-      }
-
-      // TRANSFER THIS LOGIC TO CREATE COURSE HANDLER
-      if (!priceId) {
-        const product = await stripe.products.create({
-          name: course.title,
-          description: course.shortDescription || course.instructor || "",
-        });
-        const price = await stripe.prices.create({
-          product: product.id,
-          unit_amount: Math.round(course.price * 100),
-          currency: "gbp",
-          recurring: { interval: course.billingInterval || "month" },
-        });
-        priceId = price.id;
-        await Course.findByIdAndUpdate(course._id, {
-          stripeProductId: product.id,
-          stripePriceId: priceId,
+      if (!course.stripePriceId) {
+        return res.status(500).json({
+          error: "This course is missing its Stripe price configuration. Please contact an admin.",
         });
       }
+      const priceId = course.stripePriceId;
 
       const session = await stripe.checkout.sessions.create({
         customer_email: email,
@@ -615,31 +627,12 @@ exports.reactivateSubscription = async (req, res) => {
     const course = await Course.findById(enrollment.courseId);
     if (!course) return res.status(404).json({ error: "Course not found" });
 
-    let priceId = course.stripePriceId;
-    if (priceId) {
-      try {
-        await stripe.prices.retrieve(priceId);
-      } catch {
-        priceId = null;
-      }
-    }
-    if (!priceId) {
-      const product = await stripe.products.create({
-        name: course.title,
-        description: course.shortDescription || course.instructor || "",
-      });
-      const price = await stripe.prices.create({
-        product: product.id,
-        unit_amount: Math.round(course.price * 100),
-        currency: "gbp",
-        recurring: { interval: course.billingInterval || "month" },
-      });
-      priceId = price.id;
-      await Course.findByIdAndUpdate(course._id, {
-        stripeProductId: product.id,
-        stripePriceId: priceId,
+    if (!course.stripePriceId) {
+      return res.status(500).json({
+        error: "This course is missing its Stripe price configuration. Please contact an admin.",
       });
     }
+    const priceId = course.stripePriceId;
 
     const count = enrollment.participants?.length || 1;
 
