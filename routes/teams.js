@@ -18,9 +18,6 @@ router.get("/:teamId/cancel", teamController.cancelTeamPayment);
 // Update a team (manager only)
 router.put("/:teamId", authenticateToken, teamController.updateTeam);
 
-// List my paid teams for an event (authenticated)
-router.get("/event/:eventId/my-teams", authenticateToken, teamController.getMyTeamsForEvent);
-
 // List all paid teams for an event
 router.get("/event/:eventId/teams", teamController.getTeamsForEvent);
 

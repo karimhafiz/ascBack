@@ -27,7 +27,7 @@ exports.getTeam = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exports.registerTeam = async (req, res) => {
   try {
-    const { name, members, manager } = req.body;
+    const { name, manager } = req.body;
     const { eventId } = req.params;
 
     if (!mongoose.Types.ObjectId.isValid(eventId)) {
@@ -36,9 +36,6 @@ exports.registerTeam = async (req, res) => {
 
     if (!name || !name.trim()) {
       return res.status(400).json({ error: "Team name is required" });
-    }
-    if (!members || !Array.isArray(members) || members.length === 0) {
-      return res.status(400).json({ error: "At least one team member is required" });
     }
     if (!manager || !manager.name || !manager.name.trim()) {
       return res.status(400).json({ error: "Manager name is required" });
@@ -62,7 +59,6 @@ exports.registerTeam = async (req, res) => {
       {
         $set: {
           name: name.trim(),
-          members,
           manager,
           paid: false,
         },
@@ -92,7 +88,7 @@ exports.registerTeam = async (req, res) => {
             currency: "gbp",
             product_data: {
               name: `Team Registration — ${event.title}`,
-              description: `Team: ${team.name} (${team.members.length} players)`,
+              description: `Team: ${team.name}`,
             },
             unit_amount: Math.round(amount * 100),
           },
@@ -206,26 +202,8 @@ exports.getUnpaidTeamsForManager = async (req, res) => {
   }
 };
 
-// List my paid teams for an event (authenticated)
-exports.getMyTeamsForEvent = async (req, res) => {
-  try {
-    const { eventId } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(eventId)) {
-      return res.status(400).json({ error: "Invalid event ID" });
-    }
-
-    const email = req.user.email;
-    const teams = await Team.find({ event: eventId, "manager.email": email, paid: true });
-    res.json(teams);
-  } catch (error) {
-    console.error("Error fetching your teams:", error);
-    res.status(500).json({ error: "Failed to fetch your teams" });
-  }
-};
-
 // ─── PUT /teams/:teamId ───────────────────────────────────────────────────────
-// Manager can edit their paid team: update name, add/remove/edit members.
-// Sends notification emails to new members and the manager about the change.
+// Manager can edit their paid team: update name and manager details.
 // ─────────────────────────────────────────────────────────────────────────────
 exports.updateTeam = async (req, res) => {
   try {
@@ -234,7 +212,7 @@ exports.updateTeam = async (req, res) => {
       return res.status(400).json({ error: "Invalid team ID" });
     }
 
-    const { name, members, manager } = req.body;
+    const { name, manager } = req.body;
     const email = req.user.email;
 
     const team = await Team.findById(teamId);
@@ -252,16 +230,8 @@ exports.updateTeam = async (req, res) => {
     if (!name || !name.trim()) {
       return res.status(400).json({ error: "Team name is required" });
     }
-    if (!members || !Array.isArray(members) || members.length === 0) {
-      return res.status(400).json({ error: "At least one team member is required" });
-    }
-
-    // Track which members are new (for email notifications)
-    const oldEmails = new Set(team.members.map((m) => m.email?.toLowerCase()).filter(Boolean));
-    const newMembers = members.filter((m) => m.email && !oldEmails.has(m.email.toLowerCase()));
 
     team.name = name.trim();
-    team.members = members;
 
     // Update manager name and phone (email stays the same)
     if (manager) {
@@ -271,10 +241,10 @@ exports.updateTeam = async (req, res) => {
 
     await team.save();
 
-    // Send update emails in the background
+    // Send update email in the background
     const event = await Event.findById(team.event);
     if (event) {
-      sendTeamUpdateEmail({ team, event, newMembers }).catch((err) =>
+      sendTeamUpdateEmail({ team, event }).catch((err) =>
         console.error("Team update email error:", err)
       );
     }
