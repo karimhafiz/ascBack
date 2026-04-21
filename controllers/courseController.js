@@ -873,27 +873,23 @@ exports.removeParticipant = async (req, res) => {
       return res.status(400).json({ error: "Invalid enrollment ID" });
     }
 
-    const { participantIndex: rawIndex } = req.body;
-    const participantIndex = Number(rawIndex);
+    const { participantId } = req.body;
+    if (!participantId || !mongoose.Types.ObjectId.isValid(participantId)) {
+      return res.status(400).json({ error: "Valid participantId is required" });
+    }
 
     const enrollment = await CourseEnrollment.findById(enrollmentId);
     if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
 
-    const participantOwnerId = enrollment.user?.toString();
-    const isParticipantOwner = participantOwnerId
-      ? participantOwnerId === req.user.id
-      : enrollment.buyerEmail === req.user.email;
-    if (!isParticipantOwner && req.user.role !== "admin") {
+    const ownerId = enrollment.user?.toString();
+    const isOwner = ownerId ? ownerId === req.user.id : enrollment.buyerEmail === req.user.email;
+    if (!isOwner && req.user.role !== "admin") {
       return res.status(403).json({ error: "Not authorised" });
     }
 
-    if (
-      rawIndex == null ||
-      !Number.isInteger(participantIndex) ||
-      participantIndex < 0 ||
-      participantIndex >= enrollment.participants.length
-    ) {
-      return res.status(400).json({ error: "Invalid participant index" });
+    const participant = enrollment.participants.id(participantId);
+    if (!participant) {
+      return res.status(404).json({ error: "Participant not found" });
     }
 
     if (enrollment.participants.length <= 1) {
@@ -909,13 +905,16 @@ exports.removeParticipant = async (req, res) => {
       });
     }
 
-    const removed = enrollment.participants[participantIndex];
+    const removedName = participant.name;
 
+    // Update Stripe subscription quantity first (external call, before transaction)
+    let previousQuantity;
     if (enrollment.subscriptionId && enrollment.subscriptionStatus !== "cancelled") {
       try {
         const subscription = await stripe.subscriptions.retrieve(enrollment.subscriptionId);
         const subItem = subscription.items.data[0];
         if (subItem) {
+          previousQuantity = subItem.quantity;
           await stripe.subscriptionItems.update(subItem.id, {
             quantity: enrollment.participants.length - 1,
           });
@@ -928,16 +927,44 @@ exports.removeParticipant = async (req, res) => {
       }
     }
 
-    enrollment.participants.splice(participantIndex, 1);
-    await enrollment.save({ validateModifiedOnly: true });
+    // Atomic: $pull participant + decrement course count in a transaction
+    const mongoSession = await mongoose.startSession();
+    let updatedEnrollment;
+    try {
+      await mongoSession.withTransaction(async () => {
+        updatedEnrollment = await CourseEnrollment.findByIdAndUpdate(
+          enrollmentId,
+          { $pull: { participants: { _id: participantId } } },
+          { new: true, session: mongoSession }
+        );
 
-    await Course.findByIdAndUpdate(enrollment.courseId, {
-      $inc: { currentEnrollment: -1 },
-    });
+        await Course.findByIdAndUpdate(
+          enrollment.courseId,
+          { $inc: { currentEnrollment: -1 } },
+          { session: mongoSession }
+        );
+      });
+    } catch (txErr) {
+      // Revert Stripe quantity if the transaction failed
+      if (previousQuantity !== undefined) {
+        try {
+          const sub = await stripe.subscriptions.retrieve(enrollment.subscriptionId);
+          const subItem = sub.items.data[0];
+          if (subItem) {
+            await stripe.subscriptionItems.update(subItem.id, { quantity: previousQuantity });
+          }
+        } catch (revertErr) {
+          console.error("Failed to revert Stripe subscription quantity:", revertErr);
+        }
+      }
+      throw txErr;
+    } finally {
+      await mongoSession.endSession();
+    }
 
     res.json({
-      message: `${removed.name} has been removed from this enrollment.`,
-      participants: enrollment.participants,
+      message: `${removedName} has been removed from this enrollment.`,
+      participants: updatedEnrollment.participants,
     });
   } catch (err) {
     console.error("Error removing participant:", err);
