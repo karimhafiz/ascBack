@@ -14,6 +14,16 @@ function getSubPeriodEnd(sub) {
   return sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
 }
 
+function resolveCurrentPeriodEnd(sub, fallbackInterval = "month") {
+  const periodTs = getSubPeriodEnd(sub);
+  if (periodTs) return new Date(periodTs * 1000);
+  console.warn(`Missing current_period_end for sub ${sub.id}, using fallback`);
+  const now = new Date();
+  if (fallbackInterval === "year") now.setFullYear(now.getFullYear() + 1);
+  else now.setMonth(now.getMonth() + 1);
+  return now;
+}
+
 // Create a Stripe product + recurring price for a subscription course,
 // then persist the IDs back to the course document.
 async function createStripeProductAndPrice(course) {
@@ -391,10 +401,7 @@ exports.handleEnrollmentSuccess = async (req, res) => {
         if (session.subscription) {
           const sub = session.subscription;
           enrollment.subscriptionId = sub.id;
-          const periodTs = getSubPeriodEnd(sub);
-          if (periodTs) {
-            enrollment.currentPeriodEnd = new Date(periodTs * 1000);
-          }
+          enrollment.currentPeriodEnd = resolveCurrentPeriodEnd(sub);
         }
 
         await enrollment.save();
@@ -433,10 +440,7 @@ exports.handleEnrollmentSuccess = async (req, res) => {
         const sub = session.subscription;
         pendingEnrollment.subscriptionId = sub.id;
         pendingEnrollment.subscriptionStatus = sub.status;
-        const periodTs = getSubPeriodEnd(sub);
-        if (periodTs) {
-          pendingEnrollment.currentPeriodEnd = new Date(periodTs * 1000);
-        }
+        pendingEnrollment.currentPeriodEnd = resolveCurrentPeriodEnd(sub);
       }
 
       await pendingEnrollment.save();
@@ -457,10 +461,7 @@ exports.handleEnrollmentSuccess = async (req, res) => {
         const sub = session.subscription;
         enrollmentData.subscriptionId = sub.id;
         enrollmentData.subscriptionStatus = sub.status;
-        const periodTs = getSubPeriodEnd(sub);
-        if (periodTs) {
-          enrollmentData.currentPeriodEnd = new Date(periodTs * 1000);
-        }
+        enrollmentData.currentPeriodEnd = resolveCurrentPeriodEnd(sub);
       }
 
       const enrollment = new CourseEnrollment(enrollmentData);
@@ -534,12 +535,11 @@ exports.cancelSubscription = async (req, res) => {
       cancel_at_period_end: true,
     });
 
-    const periodTs = getSubPeriodEnd(updatedSub);
-    const periodEnd = periodTs ? new Date(periodTs * 1000) : null;
+    const periodEnd = resolveCurrentPeriodEnd(updatedSub);
 
     await CourseEnrollment.findByIdAndUpdate(enrollmentId, {
       subscriptionStatus: "cancelled",
-      ...(periodEnd && { currentPeriodEnd: periodEnd }),
+      currentPeriodEnd: periodEnd,
     });
     // this could use better handling and let the user know theres no course with that courseId (if necessary)
     const course = await Course.findById(enrollment.courseId);
@@ -608,12 +608,11 @@ exports.reactivateSubscription = async (req, res) => {
         cancel_at_period_end: false,
       });
 
-      const periodTs = getSubPeriodEnd(updatedSub);
-      const periodEnd = periodTs ? new Date(periodTs * 1000) : null;
+      const periodEnd = resolveCurrentPeriodEnd(updatedSub);
 
       await CourseEnrollment.findByIdAndUpdate(enrollmentId, {
         subscriptionStatus: "active",
-        ...(periodEnd && { currentPeriodEnd: periodEnd }),
+        currentPeriodEnd: periodEnd,
       });
 
       return res.json({
@@ -901,7 +900,7 @@ exports.handleWebhook = async (req, res) => {
             { subscriptionId: invoice.subscription },
             {
               subscriptionStatus: "active",
-              currentPeriodEnd: new Date(getSubPeriodEnd(sub) * 1000),
+              currentPeriodEnd: resolveCurrentPeriodEnd(sub),
               status: "active",
             }
           );
