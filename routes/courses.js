@@ -57,6 +57,13 @@ router.post(
   courseController.removeParticipant
 );
 
+// authenticated — edit a participant on an enrollment
+router.put(
+  "/enrollments/:enrollmentId/participants/:participantId",
+  authMiddleware,
+  courseController.editParticipant
+);
+
 // Public — single course
 router.get("/:id", courseController.getCourseById);
 

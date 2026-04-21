@@ -972,6 +972,64 @@ exports.removeParticipant = async (req, res) => {
   }
 };
 
+// ─── PUT /courses/enrollments/:enrollmentId/participants/:participantId ──────
+// Edits a single participant's details on an enrollment.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.editParticipant = async (req, res) => {
+  try {
+    const { enrollmentId, participantId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(enrollmentId)) {
+      return res.status(400).json({ error: "Invalid enrollment ID" });
+    }
+    if (!mongoose.Types.ObjectId.isValid(participantId)) {
+      return res.status(400).json({ error: "Invalid participant ID" });
+    }
+
+    const { name, age, email } = req.body;
+
+    const enrollment = await CourseEnrollment.findById(enrollmentId);
+    if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
+
+    const ownerId = enrollment.user?.toString();
+    const isOwner = ownerId ? ownerId === req.user.id : enrollment.buyerEmail === req.user.email;
+    if (!isOwner && req.user.role !== "admin") {
+      return res.status(403).json({ error: "Not authorised" });
+    }
+
+    const participant = enrollment.participants.id(participantId);
+    if (!participant) {
+      return res.status(404).json({ error: "Participant not found" });
+    }
+
+    // Build $set for only provided fields
+    const $set = {};
+    if (name !== undefined) {
+      if (!name.trim()) return res.status(400).json({ error: "Name cannot be empty" });
+      $set["participants.$.name"] = name.trim();
+    }
+    if (age !== undefined) $set["participants.$.age"] = age || null;
+    if (email !== undefined) $set["participants.$.email"] = email?.trim().toLowerCase() || null;
+
+    if (Object.keys($set).length === 0) {
+      return res.status(400).json({ error: "No fields to update" });
+    }
+
+    const updated = await CourseEnrollment.findOneAndUpdate(
+      { _id: enrollmentId, "participants._id": participantId },
+      { $set },
+      { new: true }
+    );
+
+    res.json({
+      message: "Participant updated successfully.",
+      participants: updated.participants,
+    });
+  } catch (err) {
+    console.error("Error editing participant:", err);
+    res.status(500).json({ error: "Failed to edit participant" });
+  }
+};
+
 // ─── POST /courses/webhook ────────────────────────────────────────────────────
 // Stripe sends events here for subscription lifecycle.
 // Must be registered in Stripe Dashboard → Webhooks.
