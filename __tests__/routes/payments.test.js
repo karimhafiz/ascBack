@@ -163,6 +163,63 @@ describe("Payment Routes — Integration", () => {
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("Not enough tickets available");
     });
+
+    it("should create a subscription checkout for recurring events", async () => {
+      Event.findById.mockResolvedValue({
+        _id: validEventId,
+        title: "Weekly Football",
+        shortDescription: "Practice",
+        ticketPrice: 15,
+        ticketsAvailable: 50,
+        isReoccurring: true,
+        stripePriceId: "price_recurring_123",
+      });
+
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        url: "https://checkout.stripe.com/pay/cs_sub_123",
+      });
+
+      const res = await request(app)
+        .post("/api/payments/create-checkout-session")
+        .send({ eventId: validEventId, quantity: 1 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.url).toBe("https://checkout.stripe.com/pay/cs_sub_123");
+
+      expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mode: "subscription",
+          line_items: [{ price: "price_recurring_123", quantity: 1 }],
+        }),
+        expect.objectContaining({ idempotencyKey: expect.any(String) })
+      );
+    });
+
+    it("should use one-time payment for recurring events without stripePriceId", async () => {
+      Event.findById.mockResolvedValue({
+        _id: validEventId,
+        title: "Weekly Football",
+        shortDescription: "Practice",
+        ticketPrice: 15,
+        ticketsAvailable: 50,
+        isReoccurring: true,
+        stripePriceId: null,
+      });
+
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        url: "https://checkout.stripe.com/pay/cs_onetime",
+      });
+
+      const res = await request(app)
+        .post("/api/payments/create-checkout-session")
+        .send({ eventId: validEventId, quantity: 1 });
+
+      expect(res.status).toBe(200);
+      expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: "payment" }),
+        expect.objectContaining({ idempotencyKey: expect.any(String) })
+      );
+    });
   });
 
   // ─── GET /success — Payment confirmation + ticket creation ─────────────────
