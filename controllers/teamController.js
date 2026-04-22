@@ -261,13 +261,14 @@ exports.getTeamsForEvent = async (req, res) => {
     }
 
     const teams = await Team.find({ event: eventId, paid: true });
-    const fromatedTeams = teams.map((team) => ({
-      // _id: team._id,
+    const formattedTeams = teams.map((team) => ({
+      _id: team._id,
       name: team.name,
-      managerName: team.manager ? team.manager.name : "N/A",
+      paid: true,
+      manager: { name: team.manager?.name || "N/A" },
     }));
 
-    res.json(fromatedTeams);
+    res.json(formattedTeams);
   } catch (error) {
     console.error("Error fetching teams:", error);
     res.status(500).json({ error: "Failed to fetch teams" });
