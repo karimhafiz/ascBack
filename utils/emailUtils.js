@@ -152,10 +152,65 @@ async function sendTeamUpdateEmail({ team, event }) {
   });
 }
 
+/**
+ * Send an event subscription confirmation email.
+ */
+async function sendEventSubscriptionEmail({ buyerEmail, event, subscription }) {
+  const transporter = await createTransporter();
+
+  const venue = [event.street, event.city, event.postCode].filter(Boolean).join(", ");
+  const interval = event.subscriptionInterval === "week" ? "week" : "month";
+  const intervalAdj = interval === "week" ? "Weekly" : "Monthly";
+  const priceLabel = `&pound;${event.ticketPrice.toFixed(2)} / ${interval}`;
+
+  const eventDate = new Date(event.date).toLocaleDateString("en-GB", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
+  const html = `<div style="max-width:600px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;color:#0f1510;"><div style="background-color:#08b3f7;padding:24px;text-align:center;"><h1 style="margin:0;color:#ffffff;font-size:24px;">Subscription Confirmed</h1></div><div style="padding:24px;background-color:#ffffff;"><p style="margin:0 0 16px;font-size:16px;">Thank you for subscribing! Here are your event details:</p><table style="width:100%;border-collapse:collapse;margin-bottom:24px;"><tr><td style="padding:8px 0;font-weight:bold;width:120px;color:#618e9e;">Event</td><td style="padding:8px 0;">${event.title}</td></tr><tr><td style="padding:8px 0;font-weight:bold;color:#618e9e;">Date</td><td style="padding:8px 0;">${eventDate}</td></tr>${event.openingTime ? `<tr><td style="padding:8px 0;font-weight:bold;color:#618e9e;">Time</td><td style="padding:8px 0;">${event.openingTime}</td></tr>` : ""}${venue ? `<tr><td style="padding:8px 0;font-weight:bold;color:#618e9e;">Venue</td><td style="padding:8px 0;">${venue}</td></tr>` : ""}<tr><td style="padding:8px 0;font-weight:bold;color:#618e9e;">Price</td><td style="padding:8px 0;">${priceLabel}</td></tr></table><div style="background-color:#cef0fd;border:1px solid #08b3f7;border-radius:8px;padding:16px;text-align:center;margin-bottom:24px;"><p style="margin:0;font-size:14px;color:#0f1510;"><strong>Your ${intervalAdj.toLowerCase()} subscription is now active.</strong> You can manage or cancel it anytime from your profile.</p></div></div><div style="background-color:#e6f7fe;padding:16px;text-align:center;font-size:12px;color:#618e9e;"><p style="margin:0;">This email was sent by ASC Events. Do not reply to this email.</p></div></div>`;
+
+  await transporter.sendMail({
+    from: `"ASC Events" <${process.env.EMAIL_USER}>`,
+    to: buyerEmail,
+    subject: `Subscription confirmed: ${event.title}`,
+    html,
+  });
+}
+
+/**
+ * Send an event subscription cancellation email.
+ */
+async function sendEventSubscriptionCancellationEmail({ buyerEmail, event, currentPeriodEnd }) {
+  const transporter = await createTransporter();
+
+  const accessUntil = currentPeriodEnd
+    ? new Date(currentPeriodEnd).toLocaleDateString("en-GB", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      })
+    : "the end of your current billing period";
+
+  const html = `<div style="max-width:600px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;color:#0f1510;"><div style="background-color:#618e9e;padding:24px;text-align:center;"><h1 style="margin:0;color:#ffffff;font-size:24px;">Subscription Cancelled</h1></div><div style="padding:24px;background-color:#ffffff;"><p style="margin:0 0 16px;font-size:16px;">Your subscription for <strong>${event.title}</strong> has been cancelled.</p><div style="background-color:#e6f7fe;border:1px solid #adbfe4;border-radius:8px;padding:16px;margin-bottom:24px;"><table style="width:100%;border-collapse:collapse;"><tr><td style="padding:8px 0;font-weight:bold;width:140px;color:#618e9e;">Event</td><td style="padding:8px 0;">${event.title}</td></tr><tr><td style="padding:8px 0;font-weight:bold;color:#618e9e;">Access Until</td><td style="padding:8px 0;">${accessUntil}</td></tr></table></div><p style="margin:0 0 16px;font-size:14px;color:#0f1510;">You will continue to have full access until <strong>${accessUntil}</strong>. After that date, your subscription will expire.</p><p style="margin:0 0 16px;font-size:14px;color:#0f1510;">If you change your mind, you can resubscribe anytime from the event page.</p></div><div style="background-color:#e6f7fe;padding:16px;text-align:center;font-size:12px;color:#618e9e;"><p style="margin:0;">This email was sent by ASC Events. Do not reply to this email.</p></div></div>`;
+
+  await transporter.sendMail({
+    from: `"ASC Events" <${process.env.EMAIL_USER}>`,
+    to: buyerEmail,
+    subject: `Subscription cancelled: ${event.title}`,
+    html,
+  });
+}
+
 module.exports = {
   sendTicketConfirmationEmail,
   sendCourseEnrollmentEmail,
   sendSubscriptionCancellationEmail,
   sendTeamRegistrationEmail,
   sendTeamUpdateEmail,
+  sendEventSubscriptionEmail,
+  sendEventSubscriptionCancellationEmail,
 };
