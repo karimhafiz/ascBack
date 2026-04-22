@@ -32,6 +32,7 @@ app.use(
 );
 
 app.use("/courses/webhook", express.raw({ type: "application/json" }));
+app.use("/events/subscriptions/webhook", express.raw({ type: "application/json" }));
 
 app.use(express.json());
 app.use(cookieParser());
