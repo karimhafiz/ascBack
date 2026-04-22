@@ -37,8 +37,24 @@ exports.createCheckoutSession = async (req, res) => {
     const timeBucket = Math.floor(Date.now() / 10000);
     const idempotencyKey = `ticket-${eventId}-${email}-${quantity}-${timeBucket}`;
 
-    const session = await stripe.checkout.sessions.create(
-      {
+    const isSubscription = event.isReoccurring && event.stripePriceId;
+
+    let sessionConfig;
+    if (isSubscription) {
+      sessionConfig = {
+        customer_email: email,
+        line_items: [{ price: event.stripePriceId, quantity }],
+        mode: "subscription",
+        success_url: `${process.env.BACK_END_URL}payments/success?session_id={CHECKOUT_SESSION_ID}&eventId=${eventId}`,
+        cancel_url: `${process.env.FRONT_END_URL}events/${eventId}`,
+        metadata: {
+          eventId: eventId.toString(),
+          email,
+          quantity: quantity.toString(),
+        },
+      };
+    } else {
+      sessionConfig = {
         customer_email: email,
         line_items: [
           {
@@ -61,9 +77,10 @@ exports.createCheckoutSession = async (req, res) => {
           email,
           quantity: quantity.toString(),
         },
-      },
-      { idempotencyKey }
-    );
+      };
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionConfig, { idempotencyKey });
 
     res.json({ url: session.url });
   } catch (err) {
