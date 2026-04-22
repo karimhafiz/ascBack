@@ -203,7 +203,7 @@ exports.getUnpaidTeamsForManager = async (req, res) => {
 };
 
 // ─── PUT /teams/:teamId ───────────────────────────────────────────────────────
-// Manager can edit their paid team: update name and manager details.
+// Manager can edit their team: update name and manager details.
 // ─────────────────────────────────────────────────────────────────────────────
 exports.updateTeam = async (req, res) => {
   try {
@@ -221,10 +221,6 @@ exports.updateTeam = async (req, res) => {
     // Only the manager can edit
     if (team.manager.email !== email) {
       return res.status(403).json({ error: "Only the team manager can edit this team" });
-    }
-
-    if (!team.paid) {
-      return res.status(400).json({ error: "Cannot edit an unpaid team" });
     }
 
     if (!name || !name.trim()) {

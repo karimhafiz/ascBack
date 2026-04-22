@@ -263,19 +263,6 @@ describe("Team Controller", () => {
 
       expect(res.status).toBe(403);
     });
-
-    it("should return 400 if team is unpaid", async () => {
-      Team.findById.mockResolvedValue({
-        _id: validTeamId,
-        manager: { email: "m@test.com" },
-        paid: false,
-      });
-
-      const res = await request(app).put(`/api/teams/${validTeamId}`).send({ name: "New Name" });
-
-      expect(res.status).toBe(400);
-      expect(res.body.error).toBe("Cannot edit an unpaid team");
-    });
   });
 
   // ─── GET /event/:eventId/unpaid ─────────────────────────────────────────────
