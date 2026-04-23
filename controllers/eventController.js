@@ -167,6 +167,12 @@ exports.updateEvent = async (req, res) => {
       { new: true }
     );
 
+    if (updatedEvent.isReoccurring && updatedEvent.ticketPrice > 0 && !updatedEvent.stripePriceId) {
+      const { stripeProductId, stripePriceId } = await createStripeSubscription(updatedEvent);
+      updatedEvent.stripeProductId = stripeProductId;
+      updatedEvent.stripePriceId = stripePriceId;
+    }
+
     res.json({ message: "Event updated successfully", event: updatedEvent });
   } catch (error) {
     console.error("Error updating event:", error);
