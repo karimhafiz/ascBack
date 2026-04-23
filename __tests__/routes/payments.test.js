@@ -5,6 +5,7 @@ const mongoose = require("mongoose");
 // Mock models
 jest.mock("../../models/Ticket");
 jest.mock("../../models/Event");
+jest.mock("../../models/EventSubscription");
 jest.mock("../../models/User");
 
 // Mock auth middleware — pass through for tests
@@ -34,6 +35,7 @@ jest.mock("../../utils/emailUtils", () => ({
 
 const Ticket = require("../../models/Ticket");
 const Event = require("../../models/Event");
+const EventSubscription = require("../../models/EventSubscription");
 const User = require("../../models/User");
 const paymentRoutes = require("../../routes/payments");
 
@@ -162,6 +164,105 @@ describe("Payment Routes — Integration", () => {
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("Not enough tickets available");
+    });
+
+    it("should create a subscription checkout for recurring events", async () => {
+      Event.findById.mockResolvedValue({
+        _id: validEventId,
+        title: "Weekly Football",
+        shortDescription: "Practice",
+        ticketPrice: 15,
+        ticketsAvailable: 50,
+        isReoccurring: true,
+        stripePriceId: "price_recurring_123",
+      });
+
+      // No existing active subscription
+      EventSubscription.findOne.mockResolvedValue(null);
+
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        id: "cs_sub_123",
+        url: "https://checkout.stripe.com/pay/cs_sub_123",
+      });
+
+      // Mock EventSubscription constructor for pending record creation
+      EventSubscription.mockImplementation(function (data) {
+        Object.assign(this, data);
+        this.save = jest.fn().mockResolvedValue(true);
+      });
+
+      User.findOne.mockResolvedValue({ _id: "user1" });
+
+      const res = await request(app)
+        .post("/api/payments/create-checkout-session")
+        .send({ eventId: validEventId, quantity: 1 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.url).toBe("https://checkout.stripe.com/pay/cs_sub_123");
+
+      expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mode: "subscription",
+          line_items: [{ price: "price_recurring_123", quantity: 1 }],
+          success_url: expect.stringContaining("subscription-success"),
+        }),
+        expect.objectContaining({ idempotencyKey: expect.any(String) })
+      );
+
+      // Verify pending EventSubscription was created
+      const created = EventSubscription.mock.instances[0];
+      expect(created.pendingSessionId).toBe("cs_sub_123");
+      expect(created.status).toBe("pending");
+      expect(created.eventId.toString()).toBe(validEventId);
+    });
+
+    it("should return 400 if user already has active subscription", async () => {
+      Event.findById.mockResolvedValue({
+        _id: validEventId,
+        title: "Weekly Football",
+        ticketPrice: 15,
+        ticketsAvailable: 50,
+        isReoccurring: true,
+        stripePriceId: "price_recurring_123",
+      });
+
+      EventSubscription.findOne.mockResolvedValue({
+        _id: "existing_sub",
+        status: "active",
+      });
+
+      const res = await request(app)
+        .post("/api/payments/create-checkout-session")
+        .send({ eventId: validEventId, quantity: 1 });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/already have an active subscription/);
+    });
+
+    it("should use one-time payment for recurring events without stripePriceId", async () => {
+      Event.findById.mockResolvedValue({
+        _id: validEventId,
+        title: "Weekly Football",
+        shortDescription: "Practice",
+        ticketPrice: 15,
+        ticketsAvailable: 50,
+        isReoccurring: true,
+        stripePriceId: null,
+      });
+
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        url: "https://checkout.stripe.com/pay/cs_onetime",
+      });
+
+      const res = await request(app)
+        .post("/api/payments/create-checkout-session")
+        .send({ eventId: validEventId, quantity: 1 });
+
+      expect(res.status).toBe(200);
+      expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: "payment" }),
+        expect.objectContaining({ idempotencyKey: expect.any(String) })
+      );
     });
   });
 

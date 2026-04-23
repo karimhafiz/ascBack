@@ -7,6 +7,7 @@ jest.mock("../../models/User");
 jest.mock("../../models/Ticket");
 jest.mock("../../models/Team");
 jest.mock("../../models/CourseEnrollment");
+jest.mock("../../models/EventSubscription");
 jest.mock("stripe", () => {
   return jest.fn(() => ({
     subscriptions: {
@@ -30,6 +31,7 @@ const User = require("../../models/User");
 const Ticket = require("../../models/Ticket");
 const Team = require("../../models/Team");
 const CourseEnrollment = require("../../models/CourseEnrollment");
+const EventSubscription = require("../../models/EventSubscription");
 
 describe("User Controller", () => {
   let app;
@@ -281,6 +283,14 @@ describe("User Controller", () => {
       };
       CourseEnrollment.find.mockReturnValue(enrollmentChain);
 
+      // Chain mocks for EventSubscription.find().populate().sort()
+      const eventSubChain = {
+        populate: jest.fn().mockReturnValue({
+          sort: jest.fn().mockResolvedValue([]),
+        }),
+      };
+      EventSubscription.find.mockReturnValue(eventSubChain);
+
       const response = await request(app).get("/api/users/profile");
 
       expect(response.status).toBe(200);
@@ -288,6 +298,7 @@ describe("User Controller", () => {
       expect(response.body).toHaveProperty("tickets");
       expect(response.body).toHaveProperty("teams");
       expect(response.body).toHaveProperty("enrollments");
+      expect(response.body).toHaveProperty("eventSubscriptions");
     });
 
     it("should return 404 if user not found", async () => {

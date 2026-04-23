@@ -34,6 +34,10 @@ const eventSchema = new mongoose.Schema(
       default: "ASC",
     },
     isTournament: { type: Boolean, default: false },
+    subscriptionInterval: { type: String, enum: ["week", "month"], default: "month" },
+    stripeProductId: { type: String, default: null },
+    stripePriceId: { type: String, default: null },
+    currentSubscribers: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

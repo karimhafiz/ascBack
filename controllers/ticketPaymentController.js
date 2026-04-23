@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const Ticket = require("../models/Ticket");
 const Event = require("../models/Event");
+const EventSubscription = require("../models/EventSubscription");
 const User = require("../models/User");
 const { sendTicketConfirmationEmail } = require("../utils/emailUtils");
 
@@ -37,8 +38,36 @@ exports.createCheckoutSession = async (req, res) => {
     const timeBucket = Math.floor(Date.now() / 10000);
     const idempotencyKey = `ticket-${eventId}-${email}-${quantity}-${timeBucket}`;
 
-    const session = await stripe.checkout.sessions.create(
-      {
+    const isSubscription = event.isReoccurring && event.stripePriceId;
+
+    let sessionConfig;
+    if (isSubscription) {
+      // Block duplicate active subscriptions
+      const existingSub = await EventSubscription.findOne({
+        eventId: event._id,
+        buyerEmail: email,
+        status: { $in: ["active", "past_due"] },
+      });
+      if (existingSub) {
+        return res
+          .status(400)
+          .json({ error: "You already have an active subscription for this event" });
+      }
+
+      sessionConfig = {
+        customer_email: email,
+        line_items: [{ price: event.stripePriceId, quantity }],
+        mode: "subscription",
+        success_url: `${process.env.BACK_END_URL}events/${eventId}/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.FRONT_END_URL}events/${eventId}`,
+        metadata: {
+          eventId: eventId.toString(),
+          email,
+          quantity: quantity.toString(),
+        },
+      };
+    } else {
+      sessionConfig = {
         customer_email: email,
         line_items: [
           {
@@ -61,9 +90,24 @@ exports.createCheckoutSession = async (req, res) => {
           email,
           quantity: quantity.toString(),
         },
-      },
-      { idempotencyKey }
-    );
+      };
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionConfig, { idempotencyKey });
+
+    // Create a pending EventSubscription record for subscription checkouts
+    if (isSubscription) {
+      const user = await User.findOne({ email });
+      const pendingSub = new EventSubscription({
+        eventId: event._id,
+        user: user?._id ?? null,
+        buyerEmail: email,
+        pendingSessionId: session.id,
+        status: "pending",
+        quantity,
+      });
+      await pendingSub.save();
+    }
 
     res.json({ url: session.url });
   } catch (err) {
@@ -82,6 +126,14 @@ exports.handleSuccess = async (req, res) => {
 
   try {
     const session = await stripe.checkout.sessions.retrieve(session_id);
+
+    // Subscription checkouts are handled by eventSubscriptionController
+    if (session.mode === "subscription") {
+      const eventId = session.metadata?.eventId;
+      return res.redirect(
+        `${process.env.BACK_END_URL}events/${eventId}/subscription-success?session_id=${session_id}`
+      );
+    }
 
     if (session.payment_status !== "paid") {
       return res.status(400).json({ error: "Payment not completed" });
