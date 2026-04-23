@@ -1,7 +1,13 @@
 const request = require("supertest");
 const express = require("express");
 const mongoose = require("mongoose");
-const eventController = require("../../controllers/eventController");
+
+// Mock Stripe before requiring controller
+const mockStripe = {
+  products: { create: jest.fn() },
+  prices: { create: jest.fn() },
+};
+jest.mock("stripe", () => jest.fn(() => mockStripe));
 
 // Mock dependencies
 jest.mock("../../models/Event");
@@ -10,6 +16,7 @@ jest.mock("../../utils/cloudinaryUtils", () => ({
   deleteCloudinaryImage: jest.fn().mockResolvedValue(true),
 }));
 
+const eventController = require("../../controllers/eventController");
 const Event = require("../../models/Event");
 
 // Reusable valid ObjectIds
@@ -137,6 +144,101 @@ describe("Event Controller", () => {
 
       expect(response.status).toBe(400);
       expect(response.body.error).toBe("Invalid JSON in eventData");
+    });
+
+    it("should create Stripe product/price for recurring paid events", async () => {
+      const eventData = {
+        title: "Weekly Football",
+        shortDescription: "Practice",
+        longDescription: "Weekly session",
+        date: new Date().toISOString(),
+        ticketPrice: 15,
+        isReoccurring: true,
+        subscriptionInterval: "week",
+        city: "London",
+        street: "Main Street",
+      };
+
+      Event.mockImplementation(function (data) {
+        Object.assign(this, data);
+        this._id = "evt1";
+        this.save = jest.fn().mockResolvedValue(this);
+        return this;
+      });
+      Event.findByIdAndUpdate.mockResolvedValue(true);
+
+      mockStripe.products.create.mockResolvedValue({ id: "prod_123" });
+      mockStripe.prices.create.mockResolvedValue({ id: "price_123" });
+
+      const response = await request(app)
+        .post("/api/events")
+        .send({ eventData: JSON.stringify(eventData) });
+
+      expect(response.status).toBe(201);
+      expect(mockStripe.products.create).toHaveBeenCalledWith({
+        name: "Weekly Football",
+        description: "Practice",
+      });
+      expect(mockStripe.prices.create).toHaveBeenCalledWith({
+        product: "prod_123",
+        unit_amount: 1500,
+        currency: "gbp",
+        recurring: { interval: "week" },
+      });
+    });
+
+    it("should not create Stripe product for non-recurring events", async () => {
+      const eventData = {
+        title: "One-off Match",
+        shortDescription: "Single game",
+        longDescription: "A one-time event",
+        date: new Date().toISOString(),
+        ticketPrice: 10,
+        isReoccurring: false,
+        city: "London",
+        street: "Main Street",
+      };
+
+      Event.mockImplementation(function (data) {
+        Object.assign(this, data);
+        this._id = "evt2";
+        this.save = jest.fn().mockResolvedValue(this);
+        return this;
+      });
+
+      const response = await request(app)
+        .post("/api/events")
+        .send({ eventData: JSON.stringify(eventData) });
+
+      expect(response.status).toBe(201);
+      expect(mockStripe.products.create).not.toHaveBeenCalled();
+    });
+
+    it("should not create Stripe product for free recurring events", async () => {
+      const eventData = {
+        title: "Free Weekly Class",
+        shortDescription: "Free",
+        longDescription: "Free weekly class",
+        date: new Date().toISOString(),
+        ticketPrice: 0,
+        isReoccurring: true,
+        city: "London",
+        street: "Main Street",
+      };
+
+      Event.mockImplementation(function (data) {
+        Object.assign(this, data);
+        this._id = "evt3";
+        this.save = jest.fn().mockResolvedValue(this);
+        return this;
+      });
+
+      const response = await request(app)
+        .post("/api/events")
+        .send({ eventData: JSON.stringify(eventData) });
+
+      expect(response.status).toBe(201);
+      expect(mockStripe.products.create).not.toHaveBeenCalled();
     });
   });
 

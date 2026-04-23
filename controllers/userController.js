@@ -2,6 +2,7 @@ const User = require("../models/User");
 const Ticket = require("../models/Ticket");
 const Team = require("../models/Team");
 const CourseEnrollment = require("../models/CourseEnrollment");
+const EventSubscription = require("../models/EventSubscription");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const bcrypt = require("bcryptjs");
 const {
@@ -70,7 +71,7 @@ exports.login = async (req, res) => {
     const user = await User.findOne({ email });
     if (!user) return res.status(400).json({ error: "Invalid credentials" });
 
-    if (!user.password) {
+    if (user.authProvider === "google" || !user.password) {
       return res.status(400).json({
         error:
           "This account uses Google Sign-In. Please log in with Google or register with a password.",
@@ -124,10 +125,18 @@ exports.refresh = async (req, res) => {
 
     if (user.isBanned) {
       clearRefreshTokenCookie(res);
-      return res.status(403).json({ error: "Account suspended." });
+      return res.status(403).json({ error: "Account Banned." });
     }
 
     const accessToken = generateAccessToken(user);
+    const newRefreshToken = generateRefreshToken();
+
+    user.refreshToken = hashToken(newRefreshToken);
+    user.refreshTokenExpiresAt = setRefreshTokenExpiration();
+    await user.save();
+
+    setRefreshTokenCookie(res, newRefreshToken);
+
     res.json({
       accessToken,
       user: { id: user._id, name: user.name, email: user.email, role: user.role },
@@ -197,11 +206,42 @@ exports.getProfile = async (req, res) => {
       );
     }
 
+    const eventSubscriptions = await EventSubscription.find({ buyerEmail: user.email })
+      .populate(
+        "eventId",
+        "title date images city street postCode ticketPrice isReoccurring subscriptionInterval reoccurringEndDate dayOfWeek openingTime"
+      )
+      .sort({ createdAt: -1 });
+
+    // Backfill currentPeriodEnd from Stripe for event subscriptions missing it
+    const eventSubsToBackfill = eventSubscriptions.filter(
+      (s) => s.subscriptionId && !s.currentPeriodEnd
+    );
+    if (eventSubsToBackfill.length) {
+      await Promise.all(
+        eventSubsToBackfill.map(async (s) => {
+          try {
+            const sub = await stripe.subscriptions.retrieve(s.subscriptionId);
+            const periodEnd = sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
+            if (periodEnd) {
+              s.currentPeriodEnd = new Date(periodEnd * 1000);
+              await EventSubscription.findByIdAndUpdate(s._id, {
+                currentPeriodEnd: s.currentPeriodEnd,
+              });
+            }
+          } catch {
+            // Subscription may have been deleted from Stripe — skip
+          }
+        })
+      );
+    }
+
     res.json({
       user: { name: user.name, email: user.email, role: user.role },
       tickets,
       teams,
       enrollments,
+      eventSubscriptions,
     });
   } catch (err) {
     console.error("Profile fetch error:", err);

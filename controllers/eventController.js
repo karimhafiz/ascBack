@@ -1,6 +1,25 @@
 const mongoose = require("mongoose");
 const Event = require("../models/Event");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
+
+async function createStripeSubscription(event) {
+  const product = await stripe.products.create({
+    name: event.title,
+    description: event.shortDescription || "",
+  });
+  const price = await stripe.prices.create({
+    product: product.id,
+    unit_amount: Math.round(event.ticketPrice * 100),
+    currency: "gbp",
+    recurring: { interval: event.subscriptionInterval || "month" },
+  });
+  await Event.findByIdAndUpdate(event._id, {
+    stripeProductId: product.id,
+    stripePriceId: price.id,
+  });
+  return { stripeProductId: product.id, stripePriceId: price.id };
+}
 
 const ALLOWED_FIELDS = [
   "title",
@@ -23,6 +42,7 @@ const ALLOWED_FIELDS = [
   "dayOfWeek",
   "typeOfEvent",
   "isTournament",
+  "subscriptionInterval",
 ];
 
 function sanitize(data) {
@@ -77,18 +97,27 @@ exports.createEvent = async (req, res) => {
     }
 
     const imageUrl = req.file ? req.file.path || req.file.secure_url : null;
-    const sanitized = sanitize(eventData);
 
+    eventData.featured = eventData.featured === true || eventData.featured === "true";
+    eventData.isReoccurring =
+      eventData.isReoccurring === true || eventData.isReoccurring === "true";
+    eventData.isTournament = eventData.isTournament === true || eventData.isTournament === "true";
+
+    const sanitized = sanitize(eventData);
     const newEvent = new Event({
       ...sanitized,
-      featured: eventData.featured === true || eventData.featured === "true",
-      isReoccurring: eventData.isReoccurring === true || eventData.isReoccurring === "true",
-      isTournament: eventData.isTournament === true || eventData.isTournament === "true",
       images: imageUrl ? [imageUrl] : [],
       createdBy: req.user.id,
     });
 
     await newEvent.save();
+
+    if (newEvent.isReoccurring && newEvent.ticketPrice > 0) {
+      const { stripeProductId, stripePriceId } = await createStripeSubscription(newEvent);
+      newEvent.stripeProductId = stripeProductId;
+      newEvent.stripePriceId = stripePriceId;
+    }
+
     res.status(201).json({ message: "Event created successfully", event: newEvent });
   } catch (error) {
     console.error("Error creating event:", error);
@@ -123,19 +152,26 @@ exports.updateEvent = async (req, res) => {
       imagePath = req.file.path || req.file.secure_url;
     }
 
-    const sanitized = sanitize(eventData);
+    eventData.featured = eventData.featured === true || eventData.featured === "true";
+    eventData.isReoccurring =
+      eventData.isReoccurring === true || eventData.isReoccurring === "true";
+    eventData.isTournament = eventData.isTournament === true || eventData.isTournament === "true";
 
+    const sanitized = sanitize(eventData);
     const updatedEvent = await Event.findByIdAndUpdate(
       req.params.id,
       {
         ...sanitized,
-        featured: eventData.featured === true || eventData.featured === "true",
-        isReoccurring: eventData.isReoccurring === true || eventData.isReoccurring === "true",
-        isTournament: eventData.isTournament === true || eventData.isTournament === "true",
         images: imagePath ? [imagePath] : event.images,
       },
       { new: true }
     );
+
+    if (updatedEvent.isReoccurring && updatedEvent.ticketPrice > 0 && !updatedEvent.stripePriceId) {
+      const { stripeProductId, stripePriceId } = await createStripeSubscription(updatedEvent);
+      updatedEvent.stripeProductId = stripeProductId;
+      updatedEvent.stripePriceId = stripePriceId;
+    }
 
     res.json({ message: "Event updated successfully", event: updatedEvent });
   } catch (error) {

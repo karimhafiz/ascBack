@@ -1,10 +1,14 @@
 const express = require("express");
 const router = express.Router();
-const paymentController = require("../controllers/paymentController");
+const ticketPaymentController = require("../controllers/ticketPaymentController");
 const authenticateToken = require("../middleware/authMiddleware");
 
-router.post("/create-checkout-session", authenticateToken, paymentController.createCheckoutSession);
-router.get("/success", paymentController.handleSuccess);
-router.get("/session/:sessionId", authenticateToken, paymentController.getSession);
+router.post(
+  "/create-checkout-session",
+  authenticateToken,
+  ticketPaymentController.createCheckoutSession
+);
+router.get("/success", ticketPaymentController.handleSuccess);
+router.get("/session/:sessionId", authenticateToken, ticketPaymentController.getSession);
 
 module.exports = router;
