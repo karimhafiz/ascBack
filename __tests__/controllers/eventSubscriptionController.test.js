@@ -226,12 +226,16 @@ describe("getMySubscription", () => {
 
     await controller.getMySubscription(req, res);
 
-    expect(EventSubscription.findByIdAndUpdate).toHaveBeenCalledWith(validSubId, {
-      status: "cancelled",
-    });
-    expect(Event.findByIdAndUpdate).toHaveBeenCalledWith(validEventId, {
-      $inc: { currentSubscribers: -1 },
-    });
+    expect(EventSubscription.findByIdAndUpdate).toHaveBeenCalledWith(
+      validSubId,
+      { status: "cancelled" },
+      { session: mockMongoSession }
+    );
+    expect(Event.findByIdAndUpdate).toHaveBeenCalledWith(
+      validEventId,
+      { $inc: { currentSubscribers: -1 } },
+      { session: mockMongoSession }
+    );
     expect(res.json).toHaveBeenCalledWith({ subscription: null });
   });
 

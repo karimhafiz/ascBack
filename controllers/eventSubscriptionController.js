@@ -183,12 +183,23 @@ exports.getMySubscription = async (req, res) => {
       subscription.currentPeriodEnd &&
       new Date(subscription.currentPeriodEnd) < new Date()
     ) {
-      await EventSubscription.findByIdAndUpdate(subscription._id, {
-        status: "cancelled",
-      });
-      await Event.findByIdAndUpdate(subscription.eventId, {
-        $inc: { currentSubscribers: -1 },
-      });
+      const mongoSession = await mongoose.startSession();
+      try {
+        await mongoSession.withTransaction(async () => {
+          await EventSubscription.findByIdAndUpdate(
+            subscription._id,
+            { status: "cancelled" },
+            { session: mongoSession }
+          );
+          await Event.findByIdAndUpdate(
+            subscription.eventId,
+            { $inc: { currentSubscribers: -1 } },
+            { session: mongoSession }
+          );
+        });
+      } finally {
+        await mongoSession.endSession();
+      }
       return res.json({ subscription: null });
     }
 
