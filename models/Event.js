@@ -12,7 +12,7 @@ const eventSchema = new mongoose.Schema(
     city: { type: String, required: true },
     ageRestriction: { type: String },
     accessibilityInfo: { type: String },
-    // interchangeable for tournament fee (only players will pay)
+    // interchangeable for tournament fee (paid once per team by manager)
     ticketPrice: { type: Number, required: true },
     images: { type: [String] },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
