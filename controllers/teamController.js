@@ -265,7 +265,7 @@ exports.getTeamsForEvent = async (req, res) => {
       _id: team._id,
       name: team.name,
       paid: true,
-      manager: { name: team.manager?.name || "N/A" },
+      manager: { name: team.manager?.name || "N/A", email: team.manager?.email },
     }));
 
     res.json(formattedTeams);
