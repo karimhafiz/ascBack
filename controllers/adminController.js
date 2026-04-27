@@ -44,6 +44,31 @@ exports.getDashboard = async (req, res) => {
   }
 };
 
+// ── PATCH /admin/users/:id/ban ────────────────────────────────────────────────
+// Admin only — toggle a user's isBanned flag.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.toggleBan = async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ error: "Invalid user ID" });
+  }
+  if (req.params.id === req.user.id) {
+    return res.status(400).json({ error: "You cannot ban yourself" });
+  }
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+    user.isBanned = !user.isBanned;
+    await user.save();
+    res.json({
+      message: user.isBanned ? "User banned" : "User unbanned",
+      isBanned: user.isBanned,
+    });
+  } catch (err) {
+    console.error("Ban toggle error:", err);
+    res.status(500).json({ error: "Failed to update ban status" });
+  }
+};
+
 // ── GET /admin/users ─────────────────────────────────────────────────────────
 // Admin only — full user list (already returned in dashboard, but useful
 // as a standalone endpoint for future use).
