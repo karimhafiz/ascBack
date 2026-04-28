@@ -6,11 +6,8 @@ const EventSubscription = require("../models/EventSubscription");
 const User = require("../models/User");
 const { sendTicketConfirmationEmail } = require("../utils/emailUtils");
 
-// POST /payments/create-checkout-session
-exports.createCheckoutSession = async (req, res) => {
-  const { eventId, quantity: rawQuantity } = req.body;
-  const email = req.user.email;
-
+// Shared logic for both authenticated and guest checkout
+const buildCheckoutSession = async ({ email, eventId, rawQuantity, res }) => {
   if (!eventId) {
     return res.status(400).json({ error: "eventId is required" });
   }
@@ -114,6 +111,38 @@ exports.createCheckoutSession = async (req, res) => {
     console.error("Stripe session creation error:", err);
     res.status(500).json({ error: "Failed to create checkout session" });
   }
+};
+
+// POST /payments/create-checkout-session (authenticated)
+exports.createCheckoutSession = async (req, res) => {
+  const { eventId, quantity: rawQuantity } = req.body;
+  const email = req.user.email;
+  return buildCheckoutSession({ email, eventId, rawQuantity, res });
+};
+
+// POST /payments/guest-checkout-session (no auth required)
+exports.createGuestCheckoutSession = async (req, res) => {
+  const { eventId, quantity: rawQuantity, email } = req.body;
+
+  if (!email || typeof email !== "string") {
+    return res.status(400).json({ error: "Email is required" });
+  }
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email.trim())) {
+    return res.status(400).json({ error: "Invalid email address" });
+  }
+
+  // Guests cannot create subscriptions — they require an authenticated account
+  if (eventId && mongoose.Types.ObjectId.isValid(eventId)) {
+    const event = await Event.findById(eventId);
+    if (event?.isReoccurring && event?.stripePriceId) {
+      return res
+        .status(403)
+        .json({ error: "Subscriptions require an account. Please log in or register." });
+    }
+  }
+
+  return buildCheckoutSession({ email: email.trim().toLowerCase(), eventId, rawQuantity, res });
 };
 
 // GET /payments/success — Stripe redirect after payment
