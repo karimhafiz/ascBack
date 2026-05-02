@@ -1031,6 +1031,60 @@ exports.editParticipant = async (req, res) => {
   }
 };
 
+// ─── PUT /courses/enrollments/:enrollmentId ───────────────────────────────────
+// Updates editable fields on an existing enrollment (e.g. buyerPhone).
+// ─────────────────────────────────────────────────────────────────────────────
+exports.updateEnrollment = async (req, res) => {
+  try {
+    const { enrollmentId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(enrollmentId)) {
+      return res.status(400).json({ error: "Invalid enrollment ID" });
+    }
+
+    const enrollment = await CourseEnrollment.findById(enrollmentId);
+    if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
+
+    const ownerId = enrollment.user?.toString();
+    const isOwner = ownerId ? ownerId === req.user.id : enrollment.buyerEmail === req.user.email;
+    if (!isOwner && req.user.role !== "admin") {
+      return res.status(403).json({ error: "Not authorised" });
+    }
+
+    const { buyerPhone } = req.body;
+    const $set = {};
+
+    if (buyerPhone !== undefined) {
+      if (!buyerPhone || !buyerPhone.trim()) {
+        return res.status(400).json({ error: "Phone number is required" });
+      }
+      $set.buyerPhone = buyerPhone.trim();
+    }
+
+    if (Object.keys($set).length === 0) {
+      return res.status(400).json({ error: "No fields to update" });
+    }
+
+    const mongoSession = await mongoose.startSession();
+    let updated;
+    try {
+      await mongoSession.withTransaction(async () => {
+        updated = await CourseEnrollment.findByIdAndUpdate(
+          enrollmentId,
+          { $set },
+          { new: true, session: mongoSession }
+        );
+      });
+    } finally {
+      await mongoSession.endSession();
+    }
+
+    res.json({ message: "Enrollment updated successfully.", enrollment: updated });
+  } catch (err) {
+    console.error("Error updating enrollment:", err);
+    res.status(500).json({ error: "Failed to update enrollment" });
+  }
+};
+
 // ─── POST /courses/webhook ────────────────────────────────────────────────────
 // Stripe sends events here for subscription lifecycle.
 // Must be registered in Stripe Dashboard → Webhooks.
