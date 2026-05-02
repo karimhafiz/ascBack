@@ -64,6 +64,9 @@ router.put(
   courseController.editParticipant
 );
 
+// authenticated — update enrollment fields (e.g. phone)
+router.put("/enrollments/:enrollmentId", authMiddleware, courseController.updateEnrollment);
+
 // Public — single course
 router.get("/:id", courseController.getCourseById);
 
