@@ -47,6 +47,7 @@ const teamsRoutes = require("./routes/teams");
 const adminRoutes = require("./routes/admin");
 const pageContentRoutes = require("./routes/pageContent");
 const courseRoutes = require("./routes/courses");
+const venueRoutes = require("./routes/venues");
 
 // Connect to MongoDB per-request (cached after first connection)
 app.use(async (req, res, next) => {
@@ -66,6 +67,7 @@ app.use("/admin", adminRoutes);
 app.use("/teams", teamsRoutes);
 app.use("/pageContent", pageContentRoutes);
 app.use("/courses", courseRoutes);
+app.use("/venues", venueRoutes);
 
 app.get("/", (req, res) => {
   res.send("Event Ticketing API is running...");
