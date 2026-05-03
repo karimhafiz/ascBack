@@ -16,6 +16,7 @@ exports.getDashboard = async (req, res) => {
     // All paid tickets, populated with event and user info
     const tickets = await Ticket.find({ status: "paid" })
       .populate("eventId", "title date location ticketPrice")
+      .populate("user", "name")
       .sort({ createdAt: -1 });
 
     // Revenue grouped by event
