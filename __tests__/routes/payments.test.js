@@ -3,8 +3,8 @@ const express = require("express");
 const mongoose = require("mongoose");
 const dns = require("dns");
 
-// Mock DNS so email domain verification always passes in tests
-jest.spyOn(dns, "resolveMx").mockImplementation((_domain, cb) => {
+// Mock DNS — default: valid domain. Override per-test with mockResolveMx.
+const mockResolveMx = jest.spyOn(dns, "resolveMx").mockImplementation((_domain, cb) => {
   cb(null, [{ exchange: "mx.test.com", priority: 10 }]);
 });
 
@@ -66,6 +66,10 @@ describe("Payment Routes — Integration", () => {
     // Re-mock startSession after clearAllMocks
     jest.spyOn(mongoose, "startSession").mockResolvedValue(mockMongoSession);
     mockMongoSession.withTransaction.mockImplementation(async (fn) => fn());
+    // Re-mock DNS after clearAllMocks
+    mockResolveMx.mockImplementation((_domain, cb) => {
+      cb(null, [{ exchange: "mx.test.com", priority: 10 }]);
+    });
 
     app = express();
     app.use(express.json());
@@ -448,6 +452,37 @@ describe("Payment Routes — Integration", () => {
       expect(mockStripe.refunds.create).toHaveBeenCalledWith({
         payment_intent: "pi_test_123",
       });
+    });
+
+    it("should refund and redirect when email domain has no MX records", async () => {
+      mockResolveMx.mockImplementationOnce((_domain, cb) => {
+        cb(new Error("ENOTFOUND"), null);
+      });
+
+      mockStripe.checkout.sessions.retrieve.mockResolvedValue({
+        id: "cs_bad_email",
+        payment_status: "paid",
+        payment_intent: "pi_bad_email",
+        metadata: { email: "user@fake-domain.xyz", quantity: "1", eventId: validEventId },
+        amount_total: 1000,
+      });
+
+      Ticket.findOne.mockResolvedValue(null);
+      mockStripe.refunds.create.mockResolvedValue({ id: "re_email" });
+
+      const res = await request(app)
+        .get("/api/payments/success")
+        .query({ session_id: "cs_bad_email", eventId: validEventId });
+
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toMatch(/error=invalid_email/);
+      expect(mockStripe.refunds.create).toHaveBeenCalledWith({
+        payment_intent: "pi_bad_email",
+      });
+
+      // Should NOT create any tickets
+      expect(Ticket).not.toHaveBeenCalled();
+      expect(mongoose.startSession).not.toHaveBeenCalled();
     });
   });
 
