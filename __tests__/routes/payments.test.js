@@ -1,6 +1,12 @@
 const request = require("supertest");
 const express = require("express");
 const mongoose = require("mongoose");
+const dns = require("dns");
+
+// Mock DNS so email domain verification always passes in tests
+jest.spyOn(dns, "resolveMx").mockImplementation((_domain, cb) => {
+  cb(null, [{ exchange: "mx.test.com", priority: 10 }]);
+});
 
 // Mock models
 jest.mock("../../models/Ticket");
