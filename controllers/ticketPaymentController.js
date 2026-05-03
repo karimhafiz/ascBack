@@ -1,3 +1,4 @@
+const dns = require("dns");
 const mongoose = require("mongoose");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const Ticket = require("../models/Ticket");
@@ -5,6 +6,21 @@ const Event = require("../models/Event");
 const EventSubscription = require("../models/EventSubscription");
 const User = require("../models/User");
 const { sendTicketConfirmationEmail } = require("../utils/emailUtils");
+
+/**
+ * Verify an email domain has MX records (i.e. can actually receive mail).
+ * Returns true if valid, false if the domain has no MX records.
+ */
+const verifyEmailDomain = (email) => {
+  return new Promise((resolve) => {
+    const domain = email.split("@")[1];
+    if (!domain) return resolve(false);
+    dns.resolveMx(domain, (err, addresses) => {
+      if (err || !addresses || addresses.length === 0) return resolve(false);
+      resolve(true);
+    });
+  });
+};
 
 // Shared logic for both authenticated and guest checkout
 const buildCheckoutSession = async ({ email, eventId, rawQuantity, res }) => {
@@ -132,6 +148,17 @@ exports.createGuestCheckoutSession = async (req, res) => {
     return res.status(400).json({ error: "Invalid email address" });
   }
 
+  // Verify the email domain can actually receive mail
+  const emailDomainValid = await verifyEmailDomain(email.trim().toLowerCase());
+  if (!emailDomainValid) {
+    return res
+      .status(400)
+      .json({
+        error:
+          "This email domain does not appear to accept emails. Please use a valid email address.",
+      });
+  }
+
   // Guests cannot create subscriptions — they require an authenticated account
   if (eventId && mongoose.Types.ObjectId.isValid(eventId)) {
     const event = await Event.findById(eventId);
@@ -182,6 +209,18 @@ exports.handleSuccess = async (req, res) => {
       return res.status(400).json({ error: "Invalid quantity in session metadata" });
     }
     const amountPaid = session.amount_total / 100;
+
+    // Verify the email domain can receive mail — if not, refund immediately
+    const emailDomainValid = await verifyEmailDomain(email);
+    if (!emailDomainValid) {
+      console.warn(`Invalid email domain for ${email}, issuing refund for session ${session.id}`);
+      try {
+        await stripe.refunds.create({ payment_intent: session.payment_intent });
+      } catch (refundErr) {
+        console.error("Refund failed for invalid email domain:", refundErr);
+      }
+      return res.redirect(`${process.env.FRONT_END_URL}events/${eventId}?error=invalid_email`);
+    }
 
     const user = await User.findOne({ email });
 
@@ -242,6 +281,36 @@ exports.handleSuccess = async (req, res) => {
   } catch (err) {
     console.error("Stripe success handler error:", err);
     res.status(500).json({ error: "Failed to process payment confirmation" });
+  }
+};
+
+// GET /payments/guest-order/:sessionId — public endpoint for guest order confirmation
+// Secured by Stripe session ID knowledge (unguessable). Returns tickets for display.
+exports.getGuestOrder = async (req, res) => {
+  try {
+    const session = await stripe.checkout.sessions.retrieve(req.params.sessionId);
+    if (!session || session.payment_status !== "paid") {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    const tickets = await Ticket.find({ paymentId: session.id }).populate({
+      path: "eventId",
+      select: "title date openingTime street city postCode typeOfEvent images ticketPrice",
+    });
+
+    if (!tickets.length) {
+      return res.status(404).json({ error: "No tickets found for this order" });
+    }
+
+    res.json({
+      tickets,
+      email: session.customer_email,
+      amountTotal: session.amount_total / 100,
+      quantity: parseInt(session.metadata.quantity, 10),
+    });
+  } catch (err) {
+    console.error("Error fetching guest order:", err);
+    res.status(500).json({ error: "Failed to fetch order details" });
   }
 };
 

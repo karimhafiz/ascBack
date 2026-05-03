@@ -21,6 +21,7 @@ router.post(
   ticketPaymentController.createGuestCheckoutSession
 );
 router.get("/success", ticketPaymentController.handleSuccess);
+router.get("/guest-order/:sessionId", ticketPaymentController.getGuestOrder);
 router.get("/session/:sessionId", authenticateToken, ticketPaymentController.getSession);
 
 module.exports = router;

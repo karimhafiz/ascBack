@@ -1,6 +1,12 @@
 const request = require("supertest");
 const express = require("express");
 const mongoose = require("mongoose");
+const dns = require("dns");
+
+// Mock DNS — default: valid domain. Override per-test with mockResolveMx.
+const mockResolveMx = jest.spyOn(dns, "resolveMx").mockImplementation((_domain, cb) => {
+  cb(null, [{ exchange: "mx.test.com", priority: 10 }]);
+});
 
 jest.mock("../../models/Ticket");
 jest.mock("../../models/Event");
@@ -30,6 +36,8 @@ jest.mock("../../middleware/authMiddleware", () => (req, res, next) => {
 });
 
 const Event = require("../../models/Event");
+const Ticket = require("../../models/Ticket");
+const User = require("../../models/User");
 const paymentRoutes = require("../../routes/payments");
 
 const validEventId = new mongoose.Types.ObjectId().toString();
@@ -201,5 +209,135 @@ describe("Guest Checkout — POST /api/payments/guest-checkout-session", () => {
 
     expect(res.status).toBe(404);
     expect(res.body.error).toBe("Event not found");
+  });
+
+  it("should return 400 when email domain has no MX records", async () => {
+    mockResolveMx.mockImplementationOnce((_domain, cb) => {
+      cb(new Error("ENOTFOUND"), null);
+    });
+
+    // Use a fresh app without rate limiter to avoid 429
+    const freshApp = express();
+    freshApp.use(express.json());
+    const { createGuestCheckoutSession } = require("../../controllers/ticketPaymentController");
+    freshApp.post("/api/payments/guest-checkout-session", createGuestCheckoutSession);
+
+    const res = await request(freshApp)
+      .post("/api/payments/guest-checkout-session")
+      .send({ eventId: validEventId, quantity: 1, email: "user@nonexistent-domain-xyz.fake" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/does not appear to accept emails/);
+    expect(mockStripe.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+
+  it("should return 400 when email domain has empty MX records", async () => {
+    mockResolveMx.mockImplementationOnce((_domain, cb) => {
+      cb(null, []);
+    });
+
+    const freshApp = express();
+    freshApp.use(express.json());
+    const { createGuestCheckoutSession } = require("../../controllers/ticketPaymentController");
+    freshApp.post("/api/payments/guest-checkout-session", createGuestCheckoutSession);
+
+    const res = await request(freshApp)
+      .post("/api/payments/guest-checkout-session")
+      .send({ eventId: validEventId, quantity: 1, email: "user@no-mx.example" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/does not appear to accept emails/);
+  });
+});
+
+// ─── GET /guest-order/:sessionId ────────────────────────────────────────────
+
+describe("Guest Order — GET /api/payments/guest-order/:sessionId", () => {
+  let app;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockResolveMx.mockImplementation((_domain, cb) => {
+      cb(null, [{ exchange: "mx.test.com", priority: 10 }]);
+    });
+    app = express();
+    app.use(express.json());
+    app.use("/api/payments", paymentRoutes);
+  });
+
+  it("should return tickets for a valid paid session", async () => {
+    mockStripe.checkout.sessions.retrieve.mockResolvedValue({
+      id: "cs_guest_order",
+      payment_status: "paid",
+      customer_email: "guest@example.com",
+      amount_total: 2000,
+      metadata: { quantity: "2" },
+    });
+
+    const mockTickets = [
+      {
+        _id: "t1",
+        ticketCode: "TKT-ABC123",
+        buyerEmail: "guest@example.com",
+        eventId: { _id: validEventId, title: "Football", ticketPrice: 10 },
+      },
+      {
+        _id: "t2",
+        ticketCode: "TKT-DEF456",
+        buyerEmail: "guest@example.com",
+        eventId: { _id: validEventId, title: "Football", ticketPrice: 10 },
+      },
+    ];
+    Ticket.find.mockReturnValue({
+      populate: jest.fn().mockResolvedValue(mockTickets),
+    });
+
+    const res = await request(app).get("/api/payments/guest-order/cs_guest_order");
+
+    expect(res.status).toBe(200);
+    expect(res.body.tickets).toHaveLength(2);
+    expect(res.body.email).toBe("guest@example.com");
+    expect(res.body.amountTotal).toBe(20);
+    expect(res.body.quantity).toBe(2);
+  });
+
+  it("should return 404 for unpaid session", async () => {
+    mockStripe.checkout.sessions.retrieve.mockResolvedValue({
+      id: "cs_unpaid",
+      payment_status: "unpaid",
+    });
+
+    const res = await request(app).get("/api/payments/guest-order/cs_unpaid");
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Order not found");
+  });
+
+  it("should return 404 when no tickets found", async () => {
+    mockStripe.checkout.sessions.retrieve.mockResolvedValue({
+      id: "cs_no_tickets",
+      payment_status: "paid",
+      customer_email: "ghost@example.com",
+      amount_total: 1000,
+      metadata: { quantity: "1" },
+    });
+
+    Ticket.find.mockReturnValue({
+      populate: jest.fn().mockResolvedValue([]),
+    });
+
+    const res = await request(app).get("/api/payments/guest-order/cs_no_tickets");
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("No tickets found for this order");
+  });
+
+  it("should return 500 when Stripe retrieval fails", async () => {
+    mockStripe.checkout.sessions.retrieve.mockRejectedValue(new Error("Stripe error"));
+
+    const res = await request(app).get("/api/payments/guest-order/cs_bad");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch order details");
   });
 });
