@@ -57,6 +57,22 @@ exports.createVenue = async (req, res) => {
 };
 
 /**
+ * Get all active venues
+ * Public
+ */
+exports.getVenues = async (req, res) => {
+  try {
+    const venues = await Venue.find({ isActive: true }).select(
+      "name description street city postCode capacity pricePerHour amenities"
+    );
+    res.json(venues);
+  } catch (error) {
+    console.error("Error fetching venues:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
  * Get venue details
  * Public
  */

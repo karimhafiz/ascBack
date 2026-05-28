@@ -129,6 +129,13 @@ router.post(
 // Place these last to avoid parameter collision
 
 /**
+ * GET /venues
+ * Get all active venues
+ * Public
+ */
+router.get("/", venueController.getVenues);
+
+/**
  * GET /venues/:venueId/slots
  * Get available booking slots for a venue
  * Public
