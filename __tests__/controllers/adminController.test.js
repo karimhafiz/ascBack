@@ -49,7 +49,9 @@ describe("Admin Controller", () => {
 
       Ticket.find.mockReturnValue({
         populate: jest.fn().mockReturnValue({
-          sort: jest.fn().mockResolvedValue([]),
+          populate: jest.fn().mockReturnValue({
+            sort: jest.fn().mockResolvedValue([]),
+          }),
         }),
       });
       Event.find.mockResolvedValue([]);
@@ -74,6 +76,8 @@ describe("Admin Controller", () => {
       expect(response.body).toHaveProperty("tickets");
       expect(response.body).toHaveProperty("events");
       expect(response.body).toHaveProperty("teams");
+      expect(response.body).toHaveProperty("enrollments");
+      expect(response.body).toHaveProperty("courses");
       expect(response.body).toHaveProperty("users");
     });
 
