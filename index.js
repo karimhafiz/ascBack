@@ -9,6 +9,10 @@ const cookieParser = require("cookie-parser");
 
 const app = express();
 
+// Trust the first proxy (Vercel) so express-rate-limit reads the real
+// client IP from X-Forwarded-For / Forwarded headers instead of erroring.
+app.set("trust proxy", 1);
+
 const allowedOrigins = [process.env.FRONT_END_URL?.replace(/\/$/, "")];
 if (process.env.NODE_ENV !== "production") {
   allowedOrigins.push("http://localhost:5173");
@@ -32,6 +36,7 @@ app.use(
 );
 
 app.use("/courses/webhook", express.raw({ type: "application/json" }));
+app.use("/events/subscriptions/webhook", express.raw({ type: "application/json" }));
 
 app.use(express.json());
 app.use(cookieParser());

@@ -12,7 +12,7 @@ const eventSchema = new mongoose.Schema(
     city: { type: String, required: true },
     ageRestriction: { type: String },
     accessibilityInfo: { type: String },
-    // interchangeable for tournament fee (only players will pay)
+    // interchangeable for tournament fee (paid once per team by manager)
     ticketPrice: { type: Number, required: true },
     images: { type: [String] },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -34,6 +34,10 @@ const eventSchema = new mongoose.Schema(
       default: "ASC",
     },
     isTournament: { type: Boolean, default: false },
+    subscriptionInterval: { type: String, enum: ["week", "month"], default: "month" },
+    stripeProductId: { type: String, default: null },
+    stripePriceId: { type: String, default: null },
+    currentSubscribers: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

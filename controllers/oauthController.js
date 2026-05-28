@@ -43,7 +43,7 @@ exports.googleLogin = async (req, res) => {
       await user.save();
     }
 
-    if (user.isBanned) return res.status(403).json({ error: "Account suspended." });
+    if (user.isBanned) return res.status(403).json({ error: "Account Banned." });
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken();

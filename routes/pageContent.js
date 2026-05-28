@@ -15,13 +15,7 @@ router.put(
   "/:page",
   authMiddleware,
   authorize("admin", "moderator"),
-  upload.fields([
-    { name: "heroImage", maxCount: 1 },
-    { name: "activityImage_0", maxCount: 1 },
-    { name: "activityImage_1", maxCount: 1 },
-    { name: "activityImage_2", maxCount: 1 },
-    { name: "activityImage_3", maxCount: 1 },
-  ]),
+  upload.any(),
   pageContentController.updatePageContent
 );
 

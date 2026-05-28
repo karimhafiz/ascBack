@@ -7,15 +7,16 @@ const Team = require("../models/Team");
 const Event = require("../models/Event");
 
 // ── GET /admin/dashboard ──────────────────────────────────────────────────────
-// Accessible by admin and moderator.
+// Admin only.
 // Returns tickets (with buyer + event details), revenue per event,
-// team registrations, and — for admins only — the full user list.
+// team registrations, and the full user list.
 // ─────────────────────────────────────────────────────────────────────────────
 exports.getDashboard = async (req, res) => {
   try {
     // All paid tickets, populated with event and user info
     const tickets = await Ticket.find({ status: "paid" })
       .populate("eventId", "title date location ticketPrice")
+      .populate("user", "name")
       .sort({ createdAt: -1 });
 
     // Revenue grouped by event
@@ -33,20 +34,39 @@ exports.getDashboard = async (req, res) => {
       "title instructor category price currentEnrollment maxEnrollment enrollmentOpen"
     );
 
-    const payload = { tickets, events, teams, enrollments, courses };
+    const users = await User.find({}, "name email role createdAt isActive isBanned").sort({
+      createdAt: -1,
+    });
 
-    // User list — admins only
-    if (req.user.role === "admin") {
-      const users = await User.find({}, "name email role createdAt isActive isBanned").sort({
-        createdAt: -1,
-      });
-      payload.users = users;
-    }
-
-    res.json(payload);
+    res.json({ tickets, events, teams, enrollments, courses, users });
   } catch (err) {
     console.error("Dashboard error:", err);
     res.status(500).json({ error: "Failed to load dashboard" });
+  }
+};
+
+// ── PATCH /admin/users/:id/ban ────────────────────────────────────────────────
+// Admin only — toggle a user's isBanned flag.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.toggleBan = async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ error: "Invalid user ID" });
+  }
+  if (req.params.id === req.user.id) {
+    return res.status(400).json({ error: "You cannot ban yourself" });
+  }
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+    user.isBanned = !user.isBanned;
+    await user.save();
+    res.json({
+      message: user.isBanned ? "User banned" : "User unbanned",
+      isBanned: user.isBanned,
+    });
+  } catch (err) {
+    console.error("Ban toggle error:", err);
+    res.status(500).json({ error: "Failed to update ban status" });
   }
 };
 

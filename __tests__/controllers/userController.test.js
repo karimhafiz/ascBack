@@ -7,6 +7,7 @@ jest.mock("../../models/User");
 jest.mock("../../models/Ticket");
 jest.mock("../../models/Team");
 jest.mock("../../models/CourseEnrollment");
+jest.mock("../../models/EventSubscription");
 jest.mock("stripe", () => {
   return jest.fn(() => ({
     subscriptions: {
@@ -30,6 +31,7 @@ const User = require("../../models/User");
 const Ticket = require("../../models/Ticket");
 const Team = require("../../models/Team");
 const CourseEnrollment = require("../../models/CourseEnrollment");
+const EventSubscription = require("../../models/EventSubscription");
 
 describe("User Controller", () => {
   let app;
@@ -194,6 +196,7 @@ describe("User Controller", () => {
         email: "test@example.com",
         role: "user",
         refreshTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        save: jest.fn().mockResolvedValue(true),
       };
       // Controller hashes the token before querying
       User.findOne.mockResolvedValue(mockUser);
@@ -206,6 +209,9 @@ describe("User Controller", () => {
       expect(response.body).toHaveProperty("accessToken");
       // Verify the controller hashed the token before lookup
       expect(User.findOne).toHaveBeenCalledWith({ refreshToken: "hashed-valid-refresh-token" });
+      // Verify token rotation — new token saved and cookie set
+      expect(mockUser.save).toHaveBeenCalled();
+      expect(mockUser.refreshToken).toBe("hashed-mock-refresh-token");
     });
 
     it("should return 401 if no refresh token", async () => {
@@ -277,6 +283,14 @@ describe("User Controller", () => {
       };
       CourseEnrollment.find.mockReturnValue(enrollmentChain);
 
+      // Chain mocks for EventSubscription.find().populate().sort()
+      const eventSubChain = {
+        populate: jest.fn().mockReturnValue({
+          sort: jest.fn().mockResolvedValue([]),
+        }),
+      };
+      EventSubscription.find.mockReturnValue(eventSubChain);
+
       const response = await request(app).get("/api/users/profile");
 
       expect(response.status).toBe(200);
@@ -284,6 +298,7 @@ describe("User Controller", () => {
       expect(response.body).toHaveProperty("tickets");
       expect(response.body).toHaveProperty("teams");
       expect(response.body).toHaveProperty("enrollments");
+      expect(response.body).toHaveProperty("eventSubscriptions");
     });
 
     it("should return 404 if user not found", async () => {

@@ -49,7 +49,9 @@ describe("Admin Controller", () => {
 
       Ticket.find.mockReturnValue({
         populate: jest.fn().mockReturnValue({
-          sort: jest.fn().mockResolvedValue([]),
+          populate: jest.fn().mockReturnValue({
+            sort: jest.fn().mockResolvedValue([]),
+          }),
         }),
       });
       Event.find.mockResolvedValue([]);
@@ -74,35 +76,13 @@ describe("Admin Controller", () => {
       expect(response.body).toHaveProperty("tickets");
       expect(response.body).toHaveProperty("events");
       expect(response.body).toHaveProperty("teams");
+      expect(response.body).toHaveProperty("enrollments");
+      expect(response.body).toHaveProperty("courses");
       expect(response.body).toHaveProperty("users");
     });
 
-    it("should not return users for moderator", async () => {
-      mountWithUser({ id: modId, role: "moderator" });
-
-      Ticket.find.mockReturnValue({
-        populate: jest.fn().mockReturnValue({
-          sort: jest.fn().mockResolvedValue([]),
-        }),
-      });
-      Event.find.mockResolvedValue([]);
-      Team.find.mockReturnValue({
-        populate: jest.fn().mockReturnValue({
-          sort: jest.fn().mockResolvedValue([]),
-        }),
-      });
-      CourseEnrollment.find.mockReturnValue({
-        populate: jest.fn().mockReturnValue({
-          sort: jest.fn().mockResolvedValue([]),
-        }),
-      });
-      Course.find.mockResolvedValue([]);
-
-      const response = await request(app).get("/api/admin/dashboard");
-
-      expect(response.status).toBe(200);
-      expect(response.body).not.toHaveProperty("users");
-    });
+    // Moderator access is blocked at the route level (authorize middleware),
+    // not in the controller. See routes/admin.js.
   });
 
   describe("GET /users", () => {

@@ -6,11 +6,8 @@ const authenticateToken = require("../middleware/authMiddleware");
 // Get a single team by ID
 router.get("/:teamId", teamController.getTeam);
 
-// Sign up a team for an event
-router.post("/event/:eventId/signup", authenticateToken, teamController.signupTeam);
-
-// Process payment for a team
-router.post("/:teamId/pay", authenticateToken, teamController.processTeamPayment);
+// Register a team (validate + upsert + free or Stripe checkout)
+router.post("/event/:eventId/register", authenticateToken, teamController.registerTeam);
 
 // Stripe success redirect — marks team as paid
 router.get("/:teamId/payment-success", teamController.handlePaymentSuccess);
@@ -20,9 +17,6 @@ router.get("/:teamId/cancel", teamController.cancelTeamPayment);
 
 // Update a team (manager only)
 router.put("/:teamId", authenticateToken, teamController.updateTeam);
-
-// List my paid teams for an event (authenticated)
-router.get("/event/:eventId/my-teams", authenticateToken, teamController.getMyTeamsForEvent);
 
 // List all paid teams for an event
 router.get("/event/:eventId/teams", teamController.getTeamsForEvent);
