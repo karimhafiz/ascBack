@@ -211,11 +211,22 @@ exports.generateScheduleSlots = async (req, res) => {
       return res.status(400).json({ error: "No matching days found in the date range" });
     }
 
-    const result = await VenueSlot.insertMany(slotsToCreate);
-    res.status(201).json({ message: `${result.length} slot(s) generated`, slots: result });
+    try {
+      const result = await VenueSlot.insertMany(slotsToCreate, { ordered: false });
+      res.status(201).json({ message: `${result.length} slot(s) generated`, slots: result });
+    } catch (error) {
+      if (error.code === 11000 || error.name === "MongoBulkWriteError") {
+        const inserted = error.insertedDocs ?? [];
+        return res
+          .status(201)
+          .json({
+            message: `${inserted.length} slot(s) generated (some already existed and were skipped)`,
+            slots: inserted,
+          });
+      }
+      throw error;
+    }
   } catch (error) {
-    if (error.code === 11000)
-      return res.status(400).json({ error: "One or more slots already exist in that date range" });
     console.error("Error generating schedule slots:", error);
     res.status(500).json({ error: error.message });
   }
