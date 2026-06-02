@@ -13,6 +13,17 @@ const venueSchema = new mongoose.Schema(
     amenities: { type: [String] }, // e.g., ["WiFi", "Projector", "Parking"]
     rules: { type: String },
     cancellationPolicy: { type: String },
+    weeklySchedule: [
+      {
+        dayOfWeek: {
+          type: String,
+          enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
+          required: true,
+        },
+        startTime: { type: String, required: true },
+        endTime: { type: String, required: true },
+      },
+    ],
     isActive: { type: Boolean, default: true },
     managedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // Admin/Moderator
   },

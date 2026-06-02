@@ -1,9 +1,15 @@
+const mongoose = require("mongoose");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const Venue = require("../models/Venue");
 const VenueSlot = require("../models/VenueSlot");
 const VenueBooking = require("../models/VenueBooking");
 const User = require("../models/User");
-const { createTransporter } = require("../config/emailConfig");
+const {
+  sendVenueBookingConfirmationEmail,
+  sendVenueBookingCancellationEmail,
+} = require("../utils/emailUtils");
+
+const DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
 const ALLOWED_VENUE_FIELDS = [
   "name",
@@ -17,6 +23,7 @@ const ALLOWED_VENUE_FIELDS = [
   "rules",
   "cancellationPolicy",
   "isActive",
+  "weeklySchedule",
 ];
 
 function sanitizeVenue(data) {
@@ -27,43 +34,31 @@ function sanitizeVenue(data) {
   return out;
 }
 
-// ==================== ADMIN OPERATIONS ====================
+function calculateEndTime(startTime) {
+  const [hours, minutes] = startTime.split(":").map(Number);
+  const endHours = (hours + 4) % 24;
+  return `${String(endHours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
 
-/**
- * Create or initialize the community centre venue
- * Admin/Moderator only
- */
+// ==================== VENUE CRUD ====================
+
 exports.createVenue = async (req, res) => {
   try {
-    // Check if user is admin or moderator
-    if (req.user.role !== "admin" && req.user.role !== "moderator") {
-      return res.status(403).json({ error: "Only admins and moderators can create venues" });
-    }
-
     const sanitized = sanitizeVenue(req.body);
-    sanitized.managedBy = req.user._id;
-
+    sanitized.managedBy = req.user.id;
     const venue = new Venue(sanitized);
     await venue.save();
-
-    res.status(201).json({
-      message: "Venue created successfully",
-      venue,
-    });
+    res.status(201).json({ message: "Venue created successfully", venue });
   } catch (error) {
     console.error("Error creating venue:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-/**
- * Get all active venues
- * Public
- */
 exports.getVenues = async (req, res) => {
   try {
     const venues = await Venue.find({ isActive: true }).select(
-      "name description street city postCode capacity pricePerHour amenities"
+      "name description street city postCode capacity pricePerHour amenities weeklySchedule"
     );
     res.json(venues);
   } catch (error) {
@@ -72,18 +67,10 @@ exports.getVenues = async (req, res) => {
   }
 };
 
-/**
- * Get venue details
- * Public
- */
 exports.getVenue = async (req, res) => {
   try {
     const venue = await Venue.findById(req.params.venueId).populate("managedBy", "name email");
-
-    if (!venue) {
-      return res.status(404).json({ error: "Venue not found" });
-    }
-
+    if (!venue) return res.status(404).json({ error: "Venue not found" });
     res.json(venue);
   } catch (error) {
     console.error("Error fetching venue:", error);
@@ -91,144 +78,169 @@ exports.getVenue = async (req, res) => {
   }
 };
 
-/**
- * Update venue details
- * Admin/Moderator only
- */
 exports.updateVenue = async (req, res) => {
   try {
-    if (req.user.role !== "admin" && req.user.role !== "moderator") {
-      return res.status(403).json({ error: "Only admins and moderators can update venues" });
-    }
-
     const venue = await Venue.findById(req.params.venueId);
-    if (!venue) {
-      return res.status(404).json({ error: "Venue not found" });
-    }
-
-    // Check authorization
-    if (venue.managedBy.toString() !== req.user._id.toString() && req.user.role !== "admin") {
-      return res.status(403).json({ error: "Not authorized to update this venue" });
-    }
-
-    const sanitized = sanitizeVenue(req.body);
-    Object.assign(venue, sanitized);
+    if (!venue) return res.status(404).json({ error: "Venue not found" });
+    Object.assign(venue, sanitizeVenue(req.body));
     await venue.save();
-
-    res.json({
-      message: "Venue updated successfully",
-      venue,
-    });
+    res.json({ message: "Venue updated successfully", venue });
   } catch (error) {
     console.error("Error updating venue:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
+// ==================== SLOT OPERATIONS ====================
+
 /**
- * Create available booking slots for the venue
- * Admin/Moderator only
- * Body: { date, startTime, endTime (optional, calculated as startTime + 4 hours) }
+ * Create one or more manual slots for a specific date.
+ * Body: { date, startTime } for a single slot
+ *    or { slots: [{ date, startTime, endTime? }] } for bulk
  */
 exports.createVenueSlots = async (req, res) => {
   try {
-    if (req.user.role !== "admin" && req.user.role !== "moderator") {
-      return res.status(403).json({ error: "Only admins and moderators can create slots" });
-    }
-
     const { venueId } = req.params;
     const { date, startTime, slots } = req.body;
 
-    if (!venueId || !date) {
-      return res.status(400).json({ error: "venueId and date are required" });
-    }
-
     const venue = await Venue.findById(venueId);
-    if (!venue) {
-      return res.status(404).json({ error: "Venue not found" });
-    }
+    if (!venue) return res.status(404).json({ error: "Venue not found" });
 
-    // Allow creating single slot or multiple slots
-    let slotsToCreate = [];
+    let slotsToCreate;
 
     if (slots && Array.isArray(slots)) {
-      // Multiple slots in one request
-      slotsToCreate = slots.map((slot) => ({
+      slotsToCreate = slots.map((s) => ({
         venue: venueId,
-        date: new Date(slot.date),
-        startTime: slot.startTime,
-        endTime: slot.endTime || calculateEndTime(slot.startTime),
+        date: new Date(s.date),
+        startTime: s.startTime,
+        endTime: s.endTime || calculateEndTime(s.startTime),
         isAvailable: true,
-        createdBy: req.user._id,
+        source: "manual",
+        createdBy: req.user.id,
       }));
-    } else if (startTime) {
-      // Single slot
-      const endTime = calculateEndTime(startTime);
-      slotsToCreate.push({
-        venue: venueId,
-        date: new Date(date),
-        startTime,
-        endTime,
-        isAvailable: true,
-        createdBy: req.user._id,
-      });
+    } else if (date && startTime) {
+      slotsToCreate = [
+        {
+          venue: venueId,
+          date: new Date(date),
+          startTime,
+          endTime: calculateEndTime(startTime),
+          isAvailable: true,
+          source: "manual",
+          createdBy: req.user.id,
+        },
+      ];
     } else {
-      return res.status(400).json({ error: "startTime or slots array is required" });
+      return res.status(400).json({ error: "date + startTime, or slots array, is required" });
     }
 
-    const createdSlots = await VenueSlot.insertMany(slotsToCreate, { ordered: false }).catch(
-      (err) => {
-        // Handle duplicate key errors gracefully
-        console.error("Duplicate slot error:", err.writeErrors);
-        if (err.insertedDocs && err.insertedDocs.length > 0) {
-          return err.insertedDocs;
-        }
-        throw err;
-      }
-    );
-
-    res.status(201).json({
-      message: `${createdSlots.length} slot(s) created successfully`,
-      slots: createdSlots,
-    });
+    const createdSlots = await VenueSlot.insertMany(slotsToCreate);
+    res
+      .status(201)
+      .json({ message: `${createdSlots.length} slot(s) created`, slots: createdSlots });
   } catch (error) {
+    if (error.code === 11000)
+      return res
+        .status(400)
+        .json({ error: "One or more slots already exist for that date and time" });
     console.error("Error creating slots:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
 /**
- * Get available slots for a venue
- * Public
+ * Generate slots from a weekly schedule template for a date range.
+ * Body: { schedule: [{ dayOfWeek, startTime, endTime? }], fromDate, toDate }
+ * dayOfWeek: "monday" | "tuesday" | ... | "sunday"
+ */
+exports.generateScheduleSlots = async (req, res) => {
+  try {
+    const { venueId } = req.params;
+    const { fromDate, toDate } = req.body;
+
+    if (!fromDate || !toDate) {
+      return res.status(400).json({ error: "fromDate and toDate are required" });
+    }
+
+    const venue = await Venue.findById(venueId);
+    if (!venue) return res.status(404).json({ error: "Venue not found" });
+
+    if (!venue.weeklySchedule || venue.weeklySchedule.length === 0) {
+      return res.status(400).json({ error: "Venue has no weekly schedule configured" });
+    }
+
+    const start = new Date(fromDate);
+    const end = new Date(toDate);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+
+    if (end <= start) {
+      return res.status(400).json({ error: "toDate must be after fromDate" });
+    }
+
+    // Build a lookup: dayOfWeek -> [{ startTime, endTime }]
+    const dayMap = {};
+    for (const entry of venue.weeklySchedule) {
+      if (!dayMap[entry.dayOfWeek]) dayMap[entry.dayOfWeek] = [];
+      dayMap[entry.dayOfWeek].push({ startTime: entry.startTime, endTime: entry.endTime });
+    }
+
+    const slotsToCreate = [];
+    const cursor = new Date(start);
+
+    while (cursor <= end) {
+      const dayName = DAYS[cursor.getDay()];
+      const entries = dayMap[dayName];
+      if (entries) {
+        for (const { startTime, endTime } of entries) {
+          slotsToCreate.push({
+            venue: venueId,
+            date: new Date(cursor),
+            startTime,
+            endTime,
+            isAvailable: true,
+            source: "schedule",
+            createdBy: req.user.id,
+          });
+        }
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    if (slotsToCreate.length === 0) {
+      return res.status(400).json({ error: "No matching days found in the date range" });
+    }
+
+    const result = await VenueSlot.insertMany(slotsToCreate);
+    res.status(201).json({ message: `${result.length} slot(s) generated`, slots: result });
+  } catch (error) {
+    if (error.code === 11000)
+      return res.status(400).json({ error: "One or more slots already exist in that date range" });
+    console.error("Error generating schedule slots:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Get available slots for a venue on a specific date.
+ * Public. Requires ?date query param.
  */
 exports.getAvailableSlots = async (req, res) => {
   try {
     const { venueId } = req.params;
     const { date } = req.query;
 
-    if (!venueId) {
-      return res.status(400).json({ error: "venueId is required" });
-    }
+    if (!date) return res.status(400).json({ error: "date query param is required" });
 
-    const venue = await Venue.findById(venueId);
-    if (!venue) {
-      return res.status(404).json({ error: "Venue not found" });
-    }
+    const startDate = new Date(date);
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date(date);
+    endDate.setHours(23, 59, 59, 999);
 
-    const query = {
+    const slots = await VenueSlot.find({
       venue: venueId,
-      isAvailable: true,
-    };
-
-    if (date) {
-      const startDate = new Date(date);
-      startDate.setHours(0, 0, 0, 0);
-      const endDate = new Date(date);
-      endDate.setHours(23, 59, 59, 999);
-      query.date = { $gte: startDate, $lte: endDate };
-    }
-
-    const slots = await VenueSlot.find(query).sort({ date: 1, startTime: 1 });
+      date: { $gte: startDate, $lte: endDate },
+    }).sort({ startTime: 1 });
 
     res.json(slots);
   } catch (error) {
@@ -238,28 +250,56 @@ exports.getAvailableSlots = async (req, res) => {
 };
 
 /**
- * Delete a venue slot (if no booking exists)
- * Admin/Moderator only
+ * Get all slots for a venue (admin/moderator), including booked.
+ * Query params: date (optional)
+ */
+exports.getAllSlots = async (req, res) => {
+  try {
+    const { venueId } = req.params;
+    const { date } = req.query;
+
+    const query = { venue: venueId };
+    if (date) {
+      const startDate = new Date(date);
+      startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(date);
+      endDate.setHours(23, 59, 59, 999);
+      query.date = { $gte: startDate, $lte: endDate };
+    } else if (req.query.from || req.query.to) {
+      query.date = {};
+      if (req.query.from) {
+        const from = new Date(req.query.from);
+        from.setHours(0, 0, 0, 0);
+        query.date.$gte = from;
+      }
+      if (req.query.to) {
+        const to = new Date(req.query.to);
+        to.setHours(23, 59, 59, 999);
+        query.date.$lte = to;
+      }
+    }
+
+    const slots = await VenueSlot.find(query).sort({ date: 1, startTime: 1 });
+    res.json(slots);
+  } catch (error) {
+    console.error("Error fetching all slots:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Delete a slot (admin/moderator). Rejected if an active booking exists.
  */
 exports.deleteVenueSlot = async (req, res) => {
   try {
-    if (req.user.role !== "admin" && req.user.role !== "moderator") {
-      return res.status(403).json({ error: "Only admins and moderators can delete slots" });
-    }
-
     const { slotId, venueId } = req.params;
     const slot = await VenueSlot.findById(slotId);
 
-    if (!slot) {
-      return res.status(404).json({ error: "Slot not found" });
-    }
-
-    // Verify slot belongs to the specified venue
+    if (!slot) return res.status(404).json({ error: "Slot not found" });
     if (slot.venue.toString() !== venueId) {
       return res.status(400).json({ error: "Slot does not belong to this venue" });
     }
 
-    // Check if slot is booked
     const booking = await VenueBooking.findOne({ slot: slotId, status: { $ne: "cancelled" } });
     if (booking) {
       return res
@@ -268,7 +308,6 @@ exports.deleteVenueSlot = async (req, res) => {
     }
 
     await VenueSlot.findByIdAndDelete(slotId);
-
     res.json({ message: "Slot deleted successfully" });
   } catch (error) {
     console.error("Error deleting slot:", error);
@@ -276,48 +315,37 @@ exports.deleteVenueSlot = async (req, res) => {
   }
 };
 
-// ==================== USER OPERATIONS ====================
+// ==================== BOOKING OPERATIONS ====================
 
 /**
- * Create a checkout session for venue booking
- * User must be authenticated
+ * Create a Stripe checkout session for a slot booking.
+ * Body: { venueId, slotId, numberOfAttendees, eventName?, eventDescription? }
  */
 exports.createVenueBookingCheckout = async (req, res) => {
   try {
     const { venueId, slotId, numberOfAttendees, eventName, eventDescription } = req.body;
-    const userEmail = req.user.email;
 
     if (!venueId || !slotId || !numberOfAttendees) {
-      return res.status(400).json({
-        error: "venueId, slotId, and numberOfAttendees are required",
-      });
+      return res.status(400).json({ error: "venueId, slotId, and numberOfAttendees are required" });
     }
 
-    // Validate slot exists and is available
-    const slot = await VenueSlot.findById(slotId);
-    if (!slot || !slot.isAvailable) {
+    const [venue, slot] = await Promise.all([Venue.findById(venueId), VenueSlot.findById(slotId)]);
+
+    if (!venue) return res.status(404).json({ error: "Venue not found" });
+    if (!slot || !slot.isAvailable)
       return res.status(400).json({ error: "Selected slot is not available" });
-    }
+    if (slot.venue.toString() !== venueId)
+      return res.status(400).json({ error: "Slot does not belong to this venue" });
 
-    // Get venue details
-    const venue = await Venue.findById(venueId);
-    if (!venue) {
-      return res.status(404).json({ error: "Venue not found" });
-    }
-
-    // Check capacity
     if (numberOfAttendees > venue.capacity) {
       return res.status(400).json({
         error: `Number of attendees (${numberOfAttendees}) exceeds venue capacity (${venue.capacity})`,
       });
     }
 
-    const totalPrice = venue.pricePerHour; // 4-hour rate
-
-    // Create Stripe checkout session
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      customer_email: userEmail,
+      customer_email: req.user.email,
       line_items: [
         {
           price_data: {
@@ -326,13 +354,13 @@ exports.createVenueBookingCheckout = async (req, res) => {
               name: `${venue.name} - Venue Booking`,
               description: `${slot.startTime} - ${slot.endTime} on ${slot.date.toDateString()}`,
             },
-            unit_amount: Math.round(totalPrice * 100),
+            unit_amount: Math.round(venue.pricePerHour * 100),
           },
           quantity: 1,
         },
       ],
       mode: "payment",
-      success_url: `${process.env.BACK_END_URL}payments/venue-success?session_id={CHECKOUT_SESSION_ID}&slotId=${slotId}&venueId=${venueId}`,
+      success_url: `${process.env.BACK_END_URL}venues/booking/success?session_id={CHECKOUT_SESSION_ID}&slotId=${slotId}&venueId=${venueId}`,
       cancel_url: `${process.env.FRONT_END_URL}venues/book/${venueId}`,
       metadata: {
         venueId: venueId.toString(),
@@ -343,10 +371,7 @@ exports.createVenueBookingCheckout = async (req, res) => {
       },
     });
 
-    res.json({
-      sessionId: session.id,
-      url: session.url,
-    });
+    res.json({ sessionId: session.id, url: session.url });
   } catch (error) {
     console.error("Error creating venue booking checkout:", error);
     res.status(500).json({ error: error.message });
@@ -354,99 +379,99 @@ exports.createVenueBookingCheckout = async (req, res) => {
 };
 
 /**
- * Handle successful venue booking payment
+ * Confirm a venue booking after successful Stripe payment.
+ * Query params: session_id, slotId, venueId
  */
 exports.confirmVenueBooking = async (req, res) => {
   try {
-    const { sessionId, slotId, venueId } = req.query;
-    const userId = req.user._id;
+    const { session_id: sessionId, slotId, venueId } = req.query;
 
     if (!sessionId || !slotId || !venueId) {
       return res.status(400).json({ error: "Missing required parameters" });
     }
 
-    // Retrieve session from Stripe
     const session = await stripe.checkout.sessions.retrieve(sessionId);
-
     if (session.payment_status !== "paid") {
       return res.status(400).json({ error: "Payment was not completed" });
     }
 
-    // Check if booking already exists for this session
-    const existingBooking = await VenueBooking.findOne({
-      stripePaymentId: session.payment_intent,
-    });
-
+    // Idempotency check
+    const existingBooking = await VenueBooking.findOne({ stripePaymentId: session.payment_intent });
     if (existingBooking) {
-      return res.json({
-        message: "Booking already confirmed",
-        booking: existingBooking,
-      });
+      return res.redirect(
+        `${process.env.FRONT_END_URL}venue-booking-confirmation?bookingId=${existingBooking._id}`
+      );
     }
 
-    // Verify slot is still available
-    const slot = await VenueSlot.findById(slotId);
-    if (!slot || !slot.isAvailable) {
-      // Attempt refund if slot became unavailable
-      await stripe.refunds.create({ payment_intent: session.payment_intent });
-      return res.status(400).json({
-        error: "Selected slot is no longer available. Payment has been refunded.",
-      });
+    const [venue, user] = await Promise.all([
+      Venue.findById(venueId),
+      User.findOne({ email: session.customer_email }),
+    ]);
+
+    if (!user) {
+      return res.redirect(`${process.env.FRONT_END_URL}venues/booking`);
     }
 
-    const venue = await Venue.findById(venueId);
-    const user = await User.findById(userId);
+    let booking;
+    let confirmedSlot;
+    const dbSession = await mongoose.startSession();
+    try {
+      await dbSession.withTransaction(async () => {
+        const slot = await VenueSlot.findById(slotId).session(dbSession);
+        if (!slot || !slot.isAvailable) {
+          throw Object.assign(new Error("Slot unavailable"), { status: 400 });
+        }
 
-    // Create booking
-    const booking = new VenueBooking({
-      venue: venueId,
-      slot: slotId,
-      user: userId,
-      status: "confirmed",
-      numberOfAttendees: session.metadata.numberOfAttendees,
-      eventName: session.metadata.eventName,
-      eventDescription: session.metadata.eventDescription,
-      totalPrice: session.amount_total / 100,
-      paymentStatus: "paid",
-      stripePaymentId: session.payment_intent,
-      stripeChargeId: session.payment_intent,
-    });
+        slot.isAvailable = false;
+        await slot.save({ session: dbSession });
+        confirmedSlot = slot;
 
-    // Mark slot as unavailable
-    slot.isAvailable = false;
-    await Promise.all([booking.save(), slot.save()]);
+        booking = new VenueBooking({
+          venue: venueId,
+          slot: slotId,
+          user: user._id,
+          status: "confirmed",
+          numberOfAttendees: session.metadata.numberOfAttendees,
+          eventName: session.metadata.eventName,
+          eventDescription: session.metadata.eventDescription,
+          totalPrice: session.amount_total / 100,
+          paymentStatus: "paid",
+          stripePaymentId: session.payment_intent,
+          stripeChargeId: session.payment_intent,
+        });
+        await booking.save({ session: dbSession });
+      });
+    } catch (txError) {
+      if (txError.status === 400) {
+        await stripe.refunds.create({ payment_intent: session.payment_intent });
+        return res
+          .status(400)
+          .json({ error: "Selected slot is no longer available. Payment has been refunded." });
+      }
+      throw txError;
+    } finally {
+      dbSession.endSession();
+    }
 
-    // Send confirmation email
     await sendVenueBookingConfirmationEmail({
       buyerEmail: user.email,
       userName: user.name,
       booking,
       venue,
-      slot,
+      slot: confirmedSlot,
     });
 
-    res.json({
-      message: "Booking confirmed successfully",
-      booking,
-    });
+    res.redirect(`${process.env.FRONT_END_URL}venue-booking-confirmation?bookingId=${booking._id}`);
   } catch (error) {
     console.error("Error confirming venue booking:", error);
-    res.status(500).json({ error: error.message });
+    res.redirect(`${process.env.FRONT_END_URL}venues/booking`);
   }
 };
 
-/**
- * Get user's bookings
- */
 exports.getUserBookings = async (req, res) => {
   try {
-    const userId = req.user._id;
-    const { status } = req.query;
-
-    const query = { user: userId };
-    if (status) {
-      query.status = status;
-    }
+    const query = { user: req.user.id };
+    if (req.query.status) query.status = req.query.status;
 
     const bookings = await VenueBooking.find(query)
       .populate("venue", "name street city")
@@ -460,25 +485,21 @@ exports.getUserBookings = async (req, res) => {
   }
 };
 
-/**
- * Get booking details
- */
 exports.getBookingDetails = async (req, res) => {
   try {
-    const { bookingId } = req.params;
-    const userId = req.user._id;
-
-    const booking = await VenueBooking.findById(bookingId)
+    const booking = await VenueBooking.findById(req.params.bookingId)
       .populate("venue")
       .populate("slot")
       .populate("user", "name email phone");
 
-    if (!booking) {
-      return res.status(404).json({ error: "Booking not found" });
-    }
+    if (!booking) return res.status(404).json({ error: "Booking not found" });
 
-    // Users can only see their own bookings, admins can see all
-    if (booking.user._id.toString() !== userId.toString() && req.user.role !== "admin") {
+    const bookingUserId = booking.user?._id?.toString() ?? booking.user?.toString();
+    if (
+      bookingUserId !== req.user.id.toString() &&
+      req.user.role !== "admin" &&
+      req.user.role !== "moderator"
+    ) {
       return res.status(403).json({ error: "Not authorized to view this booking" });
     }
 
@@ -489,40 +510,25 @@ exports.getBookingDetails = async (req, res) => {
   }
 };
 
-/**
- * Cancel a booking
- */
 exports.cancelBooking = async (req, res) => {
   try {
     const { bookingId } = req.params;
     const { reason } = req.body;
-    const userId = req.user._id;
 
     const booking = await VenueBooking.findById(bookingId);
+    if (!booking) return res.status(404).json({ error: "Booking not found" });
 
-    if (!booking) {
-      return res.status(404).json({ error: "Booking not found" });
-    }
-
-    // Check authorization
-    if (booking.user.toString() !== userId.toString() && req.user.role !== "admin") {
+    if (booking.user.toString() !== req.user.id.toString() && req.user.role !== "admin") {
       return res.status(403).json({ error: "Not authorized to cancel this booking" });
     }
-
-    if (booking.status === "cancelled") {
+    if (booking.status === "cancelled")
       return res.status(400).json({ error: "Booking is already cancelled" });
-    }
-
-    if (booking.status === "completed") {
+    if (booking.status === "completed")
       return res.status(400).json({ error: "Cannot cancel a completed booking" });
-    }
 
-    // Handle refund if payment was made
     if (booking.paymentStatus === "paid" && booking.stripePaymentId) {
       try {
-        await stripe.refunds.create({
-          payment_intent: booking.stripePaymentId,
-        });
+        await stripe.refunds.create({ payment_intent: booking.stripePaymentId });
         booking.paymentStatus = "refunded";
       } catch (stripeError) {
         console.error("Refund error:", stripeError);
@@ -530,60 +536,52 @@ exports.cancelBooking = async (req, res) => {
       }
     }
 
-    // Update booking
-    booking.status = "cancelled";
-    booking.cancellationReason = reason || "No reason provided";
-    booking.cancelledAt = new Date();
-    booking.cancelledBy = userId;
+    const refunded = booking.paymentStatus === "refunded";
 
-    // Release the slot
-    const slot = await VenueSlot.findById(booking.slot);
-    if (slot) {
-      slot.isAvailable = true;
-      await slot.save();
+    const dbSession = await mongoose.startSession();
+    try {
+      await dbSession.withTransaction(async () => {
+        booking.status = "cancelled";
+        booking.cancellationReason = reason || "No reason provided";
+        booking.cancelledAt = new Date();
+        booking.cancelledBy = req.user.id;
+        await booking.save({ session: dbSession });
+
+        await VenueSlot.findByIdAndUpdate(
+          booking.slot,
+          { isAvailable: true },
+          { session: dbSession }
+        );
+      });
+    } finally {
+      dbSession.endSession();
     }
 
-    await booking.save();
+    const [venue, slotInfo] = await Promise.all([
+      Venue.findById(booking.venue),
+      VenueSlot.findById(booking.slot),
+    ]);
 
-    // Send cancellation email
-    const user = await User.findById(userId);
-    const venue = await Venue.findById(booking.venue);
-    const slotInfo = await VenueSlot.findById(booking.slot);
-
-    await sendBookingCancellationEmail({
-      buyerEmail: user.email,
-      userName: user.name,
+    await sendVenueBookingCancellationEmail({
+      buyerEmail: req.user.email,
+      userName: req.user.name,
       venue,
       slot: slotInfo,
-      refunded: booking.paymentStatus === "refunded",
+      refunded,
     });
 
-    res.json({
-      message: "Booking cancelled successfully",
-      booking,
-    });
+    res.json({ message: "Booking cancelled successfully", booking });
   } catch (error) {
     console.error("Error cancelling booking:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-// ==================== ADMIN OPERATIONS - BOOKINGS ====================
-
-/**
- * Get all bookings (Admin only)
- */
 exports.getAllBookings = async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ error: "Only admins can view all bookings" });
-    }
-
-    const { status, venueId } = req.query;
-
     const query = {};
-    if (status) query.status = status;
-    if (venueId) query.venue = venueId;
+    if (req.query.status) query.status = req.query.status;
+    if (req.query.venueId) query.venue = req.query.venueId;
 
     const bookings = await VenueBooking.find(query)
       .populate("venue", "name")
@@ -598,163 +596,21 @@ exports.getAllBookings = async (req, res) => {
   }
 };
 
-/**
- * Mark booking as completed (Admin only)
- */
 exports.completeBooking = async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ error: "Only admins can complete bookings" });
-    }
-
-    const { bookingId } = req.params;
-    const booking = await VenueBooking.findById(bookingId);
-
-    if (!booking) {
-      return res.status(404).json({ error: "Booking not found" });
-    }
-
-    if (booking.status === "completed") {
+    const booking = await VenueBooking.findById(req.params.bookingId);
+    if (!booking) return res.status(404).json({ error: "Booking not found" });
+    if (booking.status === "completed")
       return res.status(400).json({ error: "Booking is already completed" });
-    }
 
     booking.status = "completed";
     await booking.save();
 
-    res.json({
-      message: "Booking marked as completed",
-      booking,
-    });
+    res.json({ message: "Booking marked as completed", booking });
   } catch (error) {
     console.error("Error completing booking:", error);
     res.status(500).json({ error: error.message });
   }
 };
-
-// ==================== HELPER FUNCTIONS ====================
-
-function calculateEndTime(startTime) {
-  const [hours, minutes] = startTime.split(":").map(Number);
-  const endHours = (hours + 4) % 24;
-  return `${String(endHours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-}
-
-async function sendVenueBookingConfirmationEmail({ buyerEmail, userName, booking, venue, slot }) {
-  try {
-    const transporter = await createTransporter();
-
-    const slotDate = new Date(slot.date).toLocaleDateString("en-GB", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-
-    const venueAddress = [venue.street, venue.city, venue.postCode].filter(Boolean).join(", ");
-
-    const html = `
-      <div style="max-width:600px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;color:#0f1510;">
-        <div style="background-color:#08b3f7;padding:24px;text-align:center;">
-          <h1 style="margin:0;color:#ffffff;font-size:24px;">Venue Booking Confirmed</h1>
-        </div>
-        <div style="padding:24px;background-color:#ffffff;">
-          <p style="margin:0 0 16px;font-size:16px;">Dear ${userName},</p>
-          <p style="margin:0 0 24px;font-size:16px;">Your venue booking has been confirmed. Here are your booking details:</p>
-          
-          <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
-            <tr><td style="padding:8px 0;font-weight:bold;width:150px;color:#618e9e;">Venue</td><td style="padding:8px 0;">${venue.name}</td></tr>
-            <tr><td style="padding:8px 0;font-weight:bold;color:#618e9e;">Address</td><td style="padding:8px 0;">${venueAddress}</td></tr>
-            <tr><td style="padding:8px 0;font-weight:bold;color:#618e9e;">Capacity</td><td style="padding:8px 0;">${venue.capacity} people</td></tr>
-            <tr><td style="padding:8px 0;font-weight:bold;color:#618e9e;">Attendees</td><td style="padding:8px 0;">${booking.numberOfAttendees}</td></tr>
-            <tr><td style="padding:8px 0;font-weight:bold;color:#618e9e;">Date</td><td style="padding:8px 0;">${slotDate}</td></tr>
-            <tr><td style="padding:8px 0;font-weight:bold;color:#618e9e;">Time</td><td style="padding:8px 0;">${slot.startTime} - ${slot.endTime}</td></tr>
-            <tr><td style="padding:8px 0;font-weight:bold;color:#618e9e;">Price</td><td style="padding:8px 0;">&pound;${booking.totalPrice.toFixed(2)}</td></tr>
-          </table>
-
-          ${booking.eventName ? `<p style="margin:0 0 8px;font-size:14px;"><strong>Event:</strong> ${booking.eventName}</p>` : ""}
-          ${booking.eventDescription ? `<p style="margin:0 0 16px;font-size:14px;"><strong>Description:</strong> ${booking.eventDescription}</p>` : ""}
-
-          <div style="background-color:#cef0fd;border:1px solid #08b3f7;border-radius:8px;padding:16px;text-align:center;margin-bottom:24px;">
-            <p style="margin:0;font-size:14px;color:#0f1510;"><strong>Your booking reference: ${booking._id.toString().slice(-8).toUpperCase()}</strong></p>
-          </div>
-
-          <div style="background-color:#f9f9f9;border-left:4px solid #08b3f7;padding:16px;margin-bottom:24px;">
-            <h3 style="margin:0 0 8px;font-size:14px;color:#0f1510;">Important Information</h3>
-            <p style="margin:0;font-size:13px;color:#618e9e;">Please arrive 15 minutes before your booking time. Contact the venue directly if you need to reschedule or cancel.</p>
-            ${venue.rules ? `<p style="margin:8px 0 0;font-size:13px;color:#618e9e;"><strong>Venue Rules:</strong> ${venue.rules}</p>` : ""}
-          </div>
-
-          <p style="margin:0 0 8px;font-size:14px;">If you need to cancel or modify your booking, please visit your bookings page.</p>
-        </div>
-        <div style="background-color:#e6f7fe;padding:16px;text-align:center;font-size:12px;color:#618e9e;">
-          <p style="margin:0;">This email was sent by ASC Events. Do not reply to this email.</p>
-        </div>
-      </div>
-    `;
-
-    await transporter.sendMail({
-      from: `"ASC Events" <${process.env.EMAIL_USER}>`,
-      to: buyerEmail,
-      subject: `Venue Booking Confirmed - ${venue.name}`,
-      html,
-    });
-  } catch (error) {
-    console.error("Error sending booking confirmation email:", error);
-  }
-}
-
-async function sendBookingCancellationEmail({ buyerEmail, userName, venue, slot, refunded }) {
-  try {
-    const transporter = await createTransporter();
-
-    const slotDate = new Date(slot.date).toLocaleDateString("en-GB", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-
-    const html = `
-      <div style="max-width:600px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;color:#0f1510;">
-        <div style="background-color:#ff6b6b;padding:24px;text-align:center;">
-          <h1 style="margin:0;color:#ffffff;font-size:24px;">Booking Cancelled</h1>
-        </div>
-        <div style="padding:24px;background-color:#ffffff;">
-          <p style="margin:0 0 16px;font-size:16px;">Dear ${userName},</p>
-          <p style="margin:0 0 24px;font-size:16px;">Your venue booking has been cancelled.</p>
-          
-          <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
-            <tr><td style="padding:8px 0;font-weight:bold;width:150px;color:#618e9e;">Venue</td><td style="padding:8px 0;">${venue.name}</td></tr>
-            <tr><td style="padding:8px 0;font-weight:bold;color:#618e9e;">Date</td><td style="padding:8px 0;">${slotDate}</td></tr>
-            <tr><td style="padding:8px 0;font-weight:bold;color:#618e9e;">Time</td><td style="padding:8px 0;">${slot.startTime} - ${slot.endTime}</td></tr>
-            ${refunded ? `<tr><td style="padding:8px 0;font-weight:bold;color:#618e9e;">Refund Status</td><td style="padding:8px 0;color:#27ae60;">Refunded</td></tr>` : ""}
-          </table>
-
-          ${
-            refunded
-              ? `<div style="background-color:#d5f4e6;border:1px solid #27ae60;border-radius:8px;padding:16px;text-align:center;margin-bottom:24px;">
-            <p style="margin:0;font-size:14px;color:#0f1510;"><strong>Your refund has been processed and should appear in your account within 3-5 business days.</strong></p>
-          </div>`
-              : ""
-          }
-
-          <p style="margin:0;font-size:14px;">If you have any questions about your cancellation, please contact us.</p>
-        </div>
-        <div style="background-color:#e6f7fe;padding:16px;text-align:center;font-size:12px;color:#618e9e;">
-          <p style="margin:0;">This email was sent by ASC Events. Do not reply to this email.</p>
-        </div>
-      </div>
-    `;
-
-    await transporter.sendMail({
-      from: `"ASC Events" <${process.env.EMAIL_USER}>`,
-      to: buyerEmail,
-      subject: `Booking Cancelled - ${venue.name}`,
-      html,
-    });
-  } catch (error) {
-    console.error("Error sending cancellation email:", error);
-  }
-}
 
 module.exports = exports;

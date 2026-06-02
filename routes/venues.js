@@ -6,63 +6,18 @@ const authorize = require("../middleware/authorize");
 const { createUpload } = require("../config/multer");
 const upload = createUpload("venue-images");
 
-// ==================== ADMIN ONLY ROUTES ====================
-// Place these first to avoid parameter collision issues
+// ==================== ADMIN ONLY ====================
 
-/**
- * GET /venues/admin/bookings
- * Get all bookings
- * Admin only
- * Query params: status (optional), venueId (optional)
- */
 router.get("/admin/bookings", authMiddleware, authorize("admin"), venueController.getAllBookings);
 
-// ==================== USER AUTHENTICATED ROUTES (booking operations) ====================
-// These specific routes must come before generic /:venueId routes
+// ==================== AUTHENTICATED USER (booking operations) ====================
+// Specific routes before /:venueId to avoid param collision
 
-/**
- * POST /venues/booking/checkout
- * Create a checkout session for venue booking
- * User must be authenticated
- */
 router.post("/booking/checkout", authMiddleware, venueController.createVenueBookingCheckout);
-
-/**
- * GET /venues/booking/success
- * Confirm venue booking after successful payment
- * User must be authenticated
- * Query params: sessionId, slotId, venueId
- */
-router.get("/booking/success", authMiddleware, venueController.confirmVenueBooking);
-
-/**
- * GET /venues/my-bookings
- * Get user's bookings
- * User must be authenticated
- * Query params: status (optional)
- */
+router.get("/booking/success", venueController.confirmVenueBooking);
 router.get("/my-bookings", authMiddleware, venueController.getUserBookings);
-
-/**
- * GET /venues/booking/:bookingId
- * Get booking details
- * User must be authenticated (can view own bookings or admin)
- */
 router.get("/booking/:bookingId", authMiddleware, venueController.getBookingDetails);
-
-/**
- * POST /venues/booking/:bookingId/cancel
- * Cancel a booking
- * User must be authenticated (can cancel own bookings or admin)
- * Body: { reason (optional) }
- */
 router.post("/booking/:bookingId/cancel", authMiddleware, venueController.cancelBooking);
-
-/**
- * POST /venues/booking/:bookingId/complete
- * Mark a booking as completed
- * Admin only
- */
 router.post(
   "/booking/:bookingId/complete",
   authMiddleware,
@@ -70,14 +25,18 @@ router.post(
   venueController.completeBooking
 );
 
-// ==================== ADMIN/MODERATOR ROUTES ====================
+// ==================== ADMIN/MODERATOR ====================
 
-/**
- * POST /venues/:venueId/slots
- * Create available booking slots
- * Admin/Moderator only
- * Body: { date, startTime, endTime (optional), slots (optional array) }
- */
+// All slots (including booked), optionally filtered by ?date
+router.get(
+  "/:venueId/slots/all",
+  authMiddleware,
+  authorize("admin", "moderator"),
+  venueController.getAllSlots
+);
+
+// Create one-off manual slot(s)
+// Body: { date, startTime } or { slots: [...] }
 router.post(
   "/:venueId/slots",
   authMiddleware,
@@ -85,11 +44,16 @@ router.post(
   venueController.createVenueSlots
 );
 
-/**
- * DELETE /venues/:venueId/slot/:slotId
- * Delete a venue slot (if no booking exists)
- * Admin/Moderator only
- */
+// Generate slots from the venue's stored weeklySchedule over a date range
+// Body: { fromDate, toDate }
+router.post(
+  "/:venueId/slots/generate",
+  authMiddleware,
+  authorize("admin", "moderator"),
+  venueController.generateScheduleSlots
+);
+
+// Delete a slot (only if no active booking)
 router.delete(
   "/:venueId/slot/:slotId",
   authMiddleware,
@@ -97,57 +61,26 @@ router.delete(
   venueController.deleteVenueSlot
 );
 
-/**
- * PUT /venues/:venueId
- * Update venue details
- * Admin/Moderator only
- */
-router.put(
-  "/:venueId",
-  upload.single("image"),
+// Venue create/update
+router.post(
+  "/",
   authMiddleware,
   authorize("admin", "moderator"),
+  upload.single("image"),
+  venueController.createVenue
+);
+router.put(
+  "/:venueId",
+  authMiddleware,
+  authorize("admin", "moderator"),
+  upload.single("image"),
   venueController.updateVenue
 );
 
-// ==================== ADMIN/MODERATOR - Venue Creation ====================
+// ==================== PUBLIC ====================
 
-/**
- * POST /venues
- * Create a new venue
- * Admin/Moderator only
- */
-router.post(
-  "/",
-  upload.single("image"),
-  authMiddleware,
-  authorize("admin", "moderator"),
-  venueController.createVenue
-);
-
-// ==================== PUBLIC ROUTES ====================
-// Place these last to avoid parameter collision
-
-/**
- * GET /venues
- * Get all active venues
- * Public
- */
 router.get("/", venueController.getVenues);
-
-/**
- * GET /venues/:venueId/slots
- * Get available booking slots for a venue
- * Public
- * Query params: date (optional, ISO string)
- */
 router.get("/:venueId/slots", venueController.getAvailableSlots);
-
-/**
- * GET /venues/:venueId
- * Get venue details
- * Public
- */
 router.get("/:venueId", venueController.getVenue);
 
 module.exports = router;
