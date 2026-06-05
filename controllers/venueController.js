@@ -217,12 +217,10 @@ exports.generateScheduleSlots = async (req, res) => {
     } catch (error) {
       if (error.code === 11000 || error.name === "MongoBulkWriteError") {
         const inserted = error.insertedDocs ?? [];
-        return res
-          .status(201)
-          .json({
-            message: `${inserted.length} slot(s) generated (some already existed and were skipped)`,
-            slots: inserted,
-          });
+        return res.status(201).json({
+          message: `${inserted.length} slot(s) generated (some already existed and were skipped)`,
+          slots: inserted,
+        });
       }
       throw error;
     }
@@ -239,7 +237,46 @@ exports.generateScheduleSlots = async (req, res) => {
 exports.getAvailableSlots = async (req, res) => {
   try {
     const { venueId } = req.params;
-    const { date } = req.query;
+    const { date, from, to } = req.query;
+
+    // Range mode: return distinct dates with available slots and fully-booked dates
+    if (from || to) {
+      const dateRange = {};
+      if (from) {
+        const d = new Date(from);
+        d.setHours(0, 0, 0, 0);
+        dateRange.$gte = d;
+      }
+      if (to) {
+        const d = new Date(to);
+        d.setHours(23, 59, 59, 999);
+        dateRange.$lte = d;
+      }
+
+      const toLocalDateStr = (d) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+      };
+
+      const allSlots = await VenueSlot.find({ venue: venueId, date: dateRange })
+        .select("date isAvailable")
+        .lean();
+
+      const availableSet = new Set();
+      const allDates = new Set(allSlots.map((s) => toLocalDateStr(s.date)));
+      allSlots.forEach((s) => {
+        if (s.isAvailable) availableSet.add(toLocalDateStr(s.date));
+      });
+
+      const bookedDates = [...allDates].filter((d) => !availableSet.has(d));
+
+      return res.json({
+        availableDates: [...availableSet],
+        bookedDates,
+      });
+    }
 
     if (!date) return res.status(400).json({ error: "date query param is required" });
 
