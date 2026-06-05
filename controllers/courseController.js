@@ -8,6 +8,7 @@ const {
   sendCourseEnrollmentEmail,
   sendSubscriptionCancellationEmail,
 } = require("../utils/emailUtils");
+const { generateUniqueCode } = require("../utils/ticketUtils");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 // Stripe moved current_period_end from subscription to subscription item
@@ -263,6 +264,7 @@ exports.enrollInCourse = async (req, res) => {
     if (course.price === 0) {
       const user = await User.findOne({ email });
       const enrollment = new CourseEnrollment({
+        enrollmentCode: await generateUniqueCode("ENR", CourseEnrollment, "enrollmentCode"),
         courseId: course._id,
         user: user?._id ?? null,
         buyerEmail: email,
@@ -306,6 +308,7 @@ exports.enrollInCourse = async (req, res) => {
 
       const user = await User.findOne({ email });
       const pendingEnrollment = new CourseEnrollment({
+        enrollmentCode: await generateUniqueCode("ENR", CourseEnrollment, "enrollmentCode"),
         courseId: course._id,
         user: user?._id ?? null,
         buyerEmail: email,
@@ -351,6 +354,7 @@ exports.enrollInCourse = async (req, res) => {
 
     const user = await User.findOne({ email });
     const pendingEnrollment = new CourseEnrollment({
+      enrollmentCode: await generateUniqueCode("ENR", CourseEnrollment, "enrollmentCode"),
       courseId: course._id,
       user: user?._id ?? null,
       buyerEmail: email,
@@ -464,6 +468,7 @@ exports.handleEnrollmentSuccess = async (req, res) => {
           // Fallback: create enrollment if no pending record found
           const user = await User.findOne({ email }, null, { session: mongoSession });
           const enrollmentData = {
+            enrollmentCode: await generateUniqueCode("ENR", CourseEnrollment, "enrollmentCode"),
             courseId,
             user: user?._id ?? null,
             buyerEmail: email,

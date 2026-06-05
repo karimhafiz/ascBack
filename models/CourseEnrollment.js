@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 const courseEnrollmentSchema = new mongoose.Schema(
   {
+    enrollmentCode: { type: String, unique: true, sparse: true },
     courseId: { type: mongoose.Schema.Types.ObjectId, ref: "Course", required: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     buyerEmail: { type: String, required: true },

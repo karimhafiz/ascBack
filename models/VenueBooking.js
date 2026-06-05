@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 const venueBookingSchema = new mongoose.Schema(
   {
+    bookingCode: { type: String, unique: true, sparse: true },
     venue: { type: mongoose.Schema.Types.ObjectId, ref: "Venue", required: true },
     slot: { type: mongoose.Schema.Types.ObjectId, ref: "VenueSlot", required: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },

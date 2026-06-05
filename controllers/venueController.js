@@ -8,6 +8,7 @@ const {
   sendVenueBookingConfirmationEmail,
   sendVenueBookingCancellationEmail,
 } = require("../utils/emailUtils");
+const { generateUniqueCode } = require("../utils/ticketUtils");
 
 const DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
@@ -475,6 +476,7 @@ exports.confirmVenueBooking = async (req, res) => {
         confirmedSlot = slot;
 
         booking = new VenueBooking({
+          bookingCode: await generateUniqueCode("VBK", VenueBooking, "bookingCode"),
           venue: venueId,
           slot: slotId,
           user: user._id,
