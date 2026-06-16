@@ -2,7 +2,7 @@ const QRCode = require("qrcode");
 const { createTransporter } = require("../config/emailConfig");
 const templates = require("./emailTemplates");
 
-const FROM = `"ASC Events" <${process.env.EMAIL_USER}>`;
+const from = () => `"ASC Events" <${process.env.EMAIL_USER}>`;
 
 function formatAccessUntil(currentPeriodEnd) {
   return currentPeriodEnd
@@ -39,7 +39,7 @@ async function sendTicketConfirmationEmail({ buyerEmail, tickets, event }) {
   );
 
   await transporter.sendMail({
-    from: FROM,
+    from: from(),
     to: buyerEmail,
     subject: `Your tickets for ${event.title}`,
     html: templates.ticketConfirmation({ tickets, event, ticketRows }),
@@ -53,7 +53,7 @@ async function sendTicketConfirmationEmail({ buyerEmail, tickets, event }) {
 async function sendCourseEnrollmentEmail({ buyerEmail, course, enrollment }) {
   const transporter = await createTransporter();
   await transporter.sendMail({
-    from: FROM,
+    from: from(),
     to: buyerEmail,
     subject: `Enrollment confirmed: ${course.title}`,
     html: templates.courseEnrollment({ course, enrollment }),
@@ -66,7 +66,7 @@ async function sendCourseEnrollmentEmail({ buyerEmail, course, enrollment }) {
 async function sendSubscriptionCancellationEmail({ buyerEmail, course, currentPeriodEnd }) {
   const transporter = await createTransporter();
   await transporter.sendMail({
-    from: FROM,
+    from: from(),
     to: buyerEmail,
     subject: `Subscription cancelled: ${course.title}`,
     html: templates.courseSubscriptionCancellation({
@@ -82,7 +82,7 @@ async function sendSubscriptionCancellationEmail({ buyerEmail, course, currentPe
 async function sendTeamRegistrationEmail({ team, event }) {
   const transporter = await createTransporter();
   await transporter.sendMail({
-    from: FROM,
+    from: from(),
     to: team.manager.email,
     subject: `Team registered: ${team.name} — ${event.title}`,
     html: templates.teamRegistration({ team, event }),
@@ -95,7 +95,7 @@ async function sendTeamRegistrationEmail({ team, event }) {
 async function sendTeamUpdateEmail({ team, event }) {
   const transporter = await createTransporter();
   await transporter.sendMail({
-    from: FROM,
+    from: from(),
     to: team.manager.email,
     subject: `Team updated: ${team.name} — ${event.title}`,
     html: templates.teamUpdate({ team, event }),
@@ -108,7 +108,7 @@ async function sendTeamUpdateEmail({ team, event }) {
 async function sendEventSubscriptionEmail({ buyerEmail, event }) {
   const transporter = await createTransporter();
   await transporter.sendMail({
-    from: FROM,
+    from: from(),
     to: buyerEmail,
     subject: `Subscription confirmed: ${event.title}`,
     html: templates.eventSubscription({ event }),
@@ -121,7 +121,7 @@ async function sendEventSubscriptionEmail({ buyerEmail, event }) {
 async function sendEventSubscriptionCancellationEmail({ buyerEmail, event, currentPeriodEnd }) {
   const transporter = await createTransporter();
   await transporter.sendMail({
-    from: FROM,
+    from: from(),
     to: buyerEmail,
     subject: `Subscription cancelled: ${event.title}`,
     html: templates.eventSubscriptionCancellation({
@@ -137,7 +137,7 @@ async function sendEventSubscriptionCancellationEmail({ buyerEmail, event, curre
 async function sendVenueBookingConfirmationEmail({ buyerEmail, userName, booking, venue, slot }) {
   const transporter = await createTransporter();
   await transporter.sendMail({
-    from: FROM,
+    from: from(),
     to: buyerEmail,
     subject: `Venue Booking Confirmed - ${venue.name}`,
     html: templates.venueBookingConfirmation({
@@ -158,7 +158,7 @@ async function sendVenueBookingConfirmationEmail({ buyerEmail, userName, booking
 async function sendVenueBookingCancellationEmail({ buyerEmail, userName, venue, slot, refunded }) {
   const transporter = await createTransporter();
   await transporter.sendMail({
-    from: FROM,
+    from: from(),
     to: buyerEmail,
     subject: `Booking Cancelled - ${venue.name}`,
     html: templates.venueBookingCancellation({ userName, venue, slot, refunded }),

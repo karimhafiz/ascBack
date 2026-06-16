@@ -34,7 +34,7 @@ describe("Venue Models", () => {
     it("should reference managedBy User", () => {
       const venueSchema = Venue.schema;
 
-      expect(venueSchema.paths.managedBy.instance).toBe("ObjectID");
+      expect(venueSchema.paths.managedBy.instance).toBe("ObjectId");
       expect(venueSchema.paths.managedBy.options.ref).toBe("User");
     });
 
@@ -59,7 +59,7 @@ describe("Venue Models", () => {
     it("should reference venue", () => {
       const slotSchema = VenueSlot.schema;
 
-      expect(slotSchema.paths.venue.instance).toBe("ObjectID");
+      expect(slotSchema.paths.venue.instance).toBe("ObjectId");
       expect(slotSchema.paths.venue.options.ref).toBe("Venue");
     });
 
@@ -87,7 +87,7 @@ describe("Venue Models", () => {
     it("should reference createdBy User", () => {
       const slotSchema = VenueSlot.schema;
 
-      expect(slotSchema.paths.createdBy.instance).toBe("ObjectID");
+      expect(slotSchema.paths.createdBy.instance).toBe("ObjectId");
       expect(slotSchema.paths.createdBy.options.ref).toBe("User");
     });
   });
@@ -135,20 +135,20 @@ describe("Venue Models", () => {
     it("should reference venue, slot, and user", () => {
       const bookingSchema = VenueBooking.schema;
 
-      expect(bookingSchema.paths.venue.instance).toBe("ObjectID");
+      expect(bookingSchema.paths.venue.instance).toBe("ObjectId");
       expect(bookingSchema.paths.venue.options.ref).toBe("Venue");
 
-      expect(bookingSchema.paths.slot.instance).toBe("ObjectID");
+      expect(bookingSchema.paths.slot.instance).toBe("ObjectId");
       expect(bookingSchema.paths.slot.options.ref).toBe("VenueSlot");
 
-      expect(bookingSchema.paths.user.instance).toBe("ObjectID");
+      expect(bookingSchema.paths.user.instance).toBe("ObjectId");
       expect(bookingSchema.paths.user.options.ref).toBe("User");
     });
 
     it("should reference cancelledBy User", () => {
       const bookingSchema = VenueBooking.schema;
 
-      expect(bookingSchema.paths.cancelledBy.instance).toBe("ObjectID");
+      expect(bookingSchema.paths.cancelledBy.instance).toBe("ObjectId");
       expect(bookingSchema.paths.cancelledBy.options.ref).toBe("User");
     });
 

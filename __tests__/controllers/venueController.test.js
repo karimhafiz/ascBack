@@ -1,14 +1,12 @@
 const request = require("supertest");
 const express = require("express");
 const mongoose = require("mongoose");
-const venueController = require("../../controllers/venueController");
 
-// Mock dependencies
 jest.mock("../../models/Venue");
 jest.mock("../../models/VenueSlot");
 jest.mock("../../models/VenueBooking");
 jest.mock("../../models/User");
-jest.mock("stripe", () => ({
+const mockStripeInstance = {
   checkout: {
     sessions: {
       create: jest.fn(),
@@ -18,13 +16,18 @@ jest.mock("stripe", () => ({
   refunds: {
     create: jest.fn(),
   },
-}));
+};
+jest.mock("stripe", () => jest.fn(() => mockStripeInstance));
 jest.mock("../../config/emailConfig", () => ({
   createTransporter: jest.fn().mockResolvedValue({
     sendMail: jest.fn().mockResolvedValue(true),
   }),
 }));
+jest.mock("../../utils/ticketUtils", () => ({
+  generateUniqueCode: jest.fn().mockResolvedValue("VBK-ABC123"),
+}));
 
+const venueController = require("../../controllers/venueController");
 const Venue = require("../../models/Venue");
 const VenueSlot = require("../../models/VenueSlot");
 const VenueBooking = require("../../models/VenueBooking");
@@ -46,29 +49,40 @@ describe("Venue Controller", () => {
     app = express();
     app.use(express.json());
 
-    // Attach a fake user for authenticated routes
     app.use((req, res, next) => {
       req.user = { _id: validUserId, id: validUserId, email: "user@test.com", role: "user" };
       next();
     });
 
-    // Routes
-    app.post("/api/venues", venueController.createVenue);
+    app.post(
+      "/api/venues",
+      (req, res, next) => {
+        if (req.user.role !== "admin" && req.user.role !== "moderator") {
+          return res.status(403).json({ error: "Only admins and moderators can create venues" });
+        }
+        next();
+      },
+      venueController.createVenue
+    );
+    // Static paths before /:venueId to avoid param capture
+    app.post("/api/venues/booking/checkout", venueController.createVenueBookingCheckout);
+    app.get("/api/venues/my-bookings", venueController.getUserBookings);
+    app.post("/api/venues/booking/:bookingId/cancel", venueController.cancelBooking);
     app.get("/api/venues/:venueId", venueController.getVenue);
     app.put("/api/venues/:venueId", venueController.updateVenue);
     app.post("/api/venues/:venueId/slots", venueController.createVenueSlots);
     app.get("/api/venues/:venueId/slots", venueController.getAvailableSlots);
-    app.post("/api/venues/booking/checkout", venueController.createVenueBookingCheckout);
-    app.get("/api/venues/my-bookings", venueController.getUserBookings);
-    app.post("/api/venues/booking/:bookingId/cancel", venueController.cancelBooking);
   });
 
   describe("POST /api/venues - Create Venue", () => {
     it("should create a venue (admin only)", async () => {
-      app.use((req, res, next) => {
-        req.user = { _id: adminUserId, role: "admin", email: "admin@test.com" };
+      const adminApp = express();
+      adminApp.use(express.json());
+      adminApp.use((req, res, next) => {
+        req.user = { _id: adminUserId, id: adminUserId, role: "admin", email: "admin@test.com" };
         next();
       });
+      adminApp.post("/api/venues", venueController.createVenue);
 
       const venueData = {
         name: "Community Centre",
@@ -82,7 +96,7 @@ describe("Venue Controller", () => {
       const mockVenue = { _id: validVenueId, ...venueData, save: jest.fn() };
       Venue.mockImplementationOnce(() => mockVenue);
 
-      const response = await request(app).post("/api/venues").send(venueData);
+      const response = await request(adminApp).post("/api/venues").send(venueData);
 
       expect(response.status).toBe(201);
       expect(response.body.message).toBe("Venue created successfully");
@@ -113,10 +127,11 @@ describe("Venue Controller", () => {
         city: "London",
         capacity: 100,
         pricePerHour: 150,
-        populate: jest.fn().mockReturnThis(),
       };
 
-      Venue.findById.mockResolvedValue(mockVenue);
+      Venue.findById.mockReturnValue({
+        populate: jest.fn().mockResolvedValue(mockVenue),
+      });
 
       const response = await request(app).get(`/api/venues/${validVenueId}`);
 
@@ -125,7 +140,9 @@ describe("Venue Controller", () => {
     });
 
     it("should return 404 for non-existent venue", async () => {
-      Venue.findById.mockResolvedValue(null);
+      Venue.findById.mockReturnValue({
+        populate: jest.fn().mockResolvedValue(null),
+      });
 
       const response = await request(app).get(`/api/venues/${validVenueId}`);
 
@@ -136,44 +153,40 @@ describe("Venue Controller", () => {
 
   describe("POST /api/venues/:venueId/slots - Create Slots", () => {
     it("should create venue slots (admin only)", async () => {
-      app.use((req, res, next) => {
-        req.user = { _id: adminUserId, role: "admin", email: "admin@test.com" };
+      const adminApp = express();
+      adminApp.use(express.json());
+      adminApp.use((req, res, next) => {
+        req.user = { _id: adminUserId, id: adminUserId, role: "admin", email: "admin@test.com" };
         next();
       });
+      adminApp.post("/api/venues/:venueId/slots", venueController.createVenueSlots);
 
       const mockVenue = { _id: validVenueId, name: "Community Centre" };
       Venue.findById.mockResolvedValue(mockVenue);
-
-      const slotData = {
-        date: "2026-05-15",
-        startTime: "09:00",
-      };
 
       const mockSlots = [
         {
           _id: validSlotId,
           venue: validVenueId,
-          date: new Date(slotData.date),
+          date: new Date("2026-05-15"),
           startTime: "09:00",
           endTime: "13:00",
           isAvailable: true,
         },
       ];
-
       VenueSlot.insertMany.mockResolvedValue(mockSlots);
 
-      const response = await request(app).post(`/api/venues/${validVenueId}/slots`).send(slotData);
+      const response = await request(adminApp)
+        .post(`/api/venues/${validVenueId}/slots`)
+        .send({ date: "2026-05-15", startTime: "09:00" });
 
       expect(response.status).toBe(201);
-      expect(response.body.message).toContain("created successfully");
+      expect(response.body.message).toContain("slot(s) created");
     });
   });
 
   describe("GET /api/venues/:venueId/slots - Get Available Slots", () => {
     it("should fetch available slots", async () => {
-      const mockVenue = { _id: validVenueId, name: "Community Centre" };
-      Venue.findById.mockResolvedValue(mockVenue);
-
       const mockSlots = [
         {
           _id: validSlotId,
@@ -189,7 +202,7 @@ describe("Venue Controller", () => {
         sort: jest.fn().mockResolvedValue(mockSlots),
       });
 
-      const response = await request(app).get(`/api/venues/${validVenueId}/slots`);
+      const response = await request(app).get(`/api/venues/${validVenueId}/slots?date=2026-05-15`);
 
       expect(response.status).toBe(200);
       expect(response.body).toHaveLength(1);
@@ -199,8 +212,6 @@ describe("Venue Controller", () => {
 
   describe("POST /api/venues/booking/checkout - Create Booking Checkout", () => {
     it("should create a checkout session for booking", async () => {
-      const stripe = require("stripe");
-
       const mockVenue = {
         _id: validVenueId,
         name: "Community Centre",
@@ -210,6 +221,7 @@ describe("Venue Controller", () => {
 
       const mockSlot = {
         _id: validSlotId,
+        venue: validVenueId,
         isAvailable: true,
         date: new Date("2026-05-15"),
         startTime: "09:00",
@@ -219,7 +231,7 @@ describe("Venue Controller", () => {
       VenueSlot.findById.mockResolvedValue(mockSlot);
       Venue.findById.mockResolvedValue(mockVenue);
 
-      stripe.checkout.sessions.create.mockResolvedValue({
+      mockStripeInstance.checkout.sessions.create.mockResolvedValue({
         id: "cs_test_123",
         url: "https://checkout.stripe.com/test",
       });
@@ -237,7 +249,6 @@ describe("Venue Controller", () => {
 
     it("should reject booking for unavailable slot", async () => {
       const mockSlot = { _id: validSlotId, isAvailable: false };
-
       VenueSlot.findById.mockResolvedValue(mockSlot);
 
       const response = await request(app).post("/api/venues/booking/checkout").send({
@@ -260,6 +271,7 @@ describe("Venue Controller", () => {
 
       const mockSlot = {
         _id: validSlotId,
+        venue: validVenueId,
         isAvailable: true,
         date: new Date("2026-05-15"),
         startTime: "09:00",
@@ -291,13 +303,15 @@ describe("Venue Controller", () => {
           status: "confirmed",
           numberOfAttendees: 50,
           totalPrice: 150,
-          populate: jest.fn().mockReturnThis(),
         },
       ];
 
       VenueBooking.find.mockReturnValue({
-        populate: jest.fn().mockReturnThis(),
-        sort: jest.fn().mockResolvedValue(mockBookings),
+        populate: jest.fn().mockReturnValue({
+          populate: jest.fn().mockReturnValue({
+            sort: jest.fn().mockResolvedValue(mockBookings),
+          }),
+        }),
       });
 
       const response = await request(app).get("/api/venues/my-bookings");
@@ -313,34 +327,34 @@ describe("Venue Controller", () => {
       const mockBooking = {
         _id: validBookingId,
         user: validUserId,
+        venue: validVenueId,
         slot: validSlotId,
         status: "confirmed",
         paymentStatus: "unpaid",
-        stripePaymentId: "pi_123",
-        save: jest.fn(),
+        stripePaymentId: null,
+        cancellationReason: null,
+        cancelledAt: null,
+        cancelledBy: null,
+        save: jest.fn().mockResolvedValue(true),
       };
 
-      const mockSlot = {
-        _id: validSlotId,
-        isAvailable: false,
-        save: jest.fn(),
-      };
-
-      const mockUser = {
-        _id: validUserId,
-        name: "John Doe",
-        email: "john@test.com",
-      };
-
-      const mockVenue = {
-        _id: validVenueId,
-        name: "Community Centre",
-      };
+      const mockSlot = { _id: validSlotId, isAvailable: false, save: jest.fn() };
+      const mockUser = { _id: validUserId, name: "John Doe", email: "john@test.com" };
+      const mockVenue = { _id: validVenueId, name: "Community Centre" };
 
       VenueBooking.findById.mockResolvedValue(mockBooking);
       VenueSlot.findById.mockResolvedValue(mockSlot);
+      VenueSlot.findByIdAndUpdate.mockResolvedValue(mockSlot);
       User.findById.mockResolvedValue(mockUser);
       Venue.findById.mockResolvedValue(mockVenue);
+
+      // mongoose.startSession used in cancelBooking — mock it
+      jest.spyOn(mongoose, "startSession").mockResolvedValue({
+        withTransaction: jest.fn().mockImplementation(async (fn) => {
+          await fn();
+        }),
+        endSession: jest.fn(),
+      });
 
       const response = await request(app)
         .post(`/api/venues/booking/${validBookingId}/cancel`)
@@ -351,13 +365,11 @@ describe("Venue Controller", () => {
     });
 
     it("should reject cancellation of already cancelled booking", async () => {
-      const mockBooking = {
+      VenueBooking.findById.mockResolvedValue({
         _id: validBookingId,
         user: validUserId,
         status: "cancelled",
-      };
-
-      VenueBooking.findById.mockResolvedValue(mockBooking);
+      });
 
       const response = await request(app)
         .post(`/api/venues/booking/${validBookingId}/cancel`)
@@ -368,13 +380,11 @@ describe("Venue Controller", () => {
     });
 
     it("should reject cancellation of completed booking", async () => {
-      const mockBooking = {
+      VenueBooking.findById.mockResolvedValue({
         _id: validBookingId,
         user: validUserId,
         status: "completed",
-      };
-
-      VenueBooking.findById.mockResolvedValue(mockBooking);
+      });
 
       const response = await request(app)
         .post(`/api/venues/booking/${validBookingId}/cancel`)

@@ -8,6 +8,7 @@ jest.mock("../../models/Ticket");
 jest.mock("../../models/Team");
 jest.mock("../../models/CourseEnrollment");
 jest.mock("../../models/EventSubscription");
+jest.mock("../../models/VenueBooking");
 jest.mock("stripe", () => {
   return jest.fn(() => ({
     subscriptions: {
@@ -32,6 +33,7 @@ const Ticket = require("../../models/Ticket");
 const Team = require("../../models/Team");
 const CourseEnrollment = require("../../models/CourseEnrollment");
 const EventSubscription = require("../../models/EventSubscription");
+const VenueBooking = require("../../models/VenueBooking");
 
 describe("User Controller", () => {
   let app;
@@ -259,37 +261,33 @@ describe("User Controller", () => {
         select: jest.fn().mockResolvedValue(mockUser),
       });
 
-      // Chain mocks for Ticket.find().populate().sort()
-      const ticketChain = {
+      Ticket.find.mockReturnValue({
         populate: jest.fn().mockReturnValue({
           sort: jest.fn().mockResolvedValue([]),
         }),
-      };
-      Ticket.find.mockReturnValue(ticketChain);
-
-      // Chain mocks for Team.find().populate().sort()
-      const teamChain = {
+      });
+      Team.find.mockReturnValue({
         populate: jest.fn().mockReturnValue({
           sort: jest.fn().mockResolvedValue([]),
         }),
-      };
-      Team.find.mockReturnValue(teamChain);
-
-      // Chain mocks for CourseEnrollment.find().populate().sort()
-      const enrollmentChain = {
+      });
+      CourseEnrollment.find.mockReturnValue({
         populate: jest.fn().mockReturnValue({
           sort: jest.fn().mockResolvedValue([]),
         }),
-      };
-      CourseEnrollment.find.mockReturnValue(enrollmentChain);
-
-      // Chain mocks for EventSubscription.find().populate().sort()
-      const eventSubChain = {
+      });
+      EventSubscription.find.mockReturnValue({
         populate: jest.fn().mockReturnValue({
           sort: jest.fn().mockResolvedValue([]),
         }),
-      };
-      EventSubscription.find.mockReturnValue(eventSubChain);
+      });
+      VenueBooking.find.mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          populate: jest.fn().mockReturnValue({
+            sort: jest.fn().mockResolvedValue([]),
+          }),
+        }),
+      });
 
       const response = await request(app).get("/api/users/profile");
 
@@ -299,6 +297,7 @@ describe("User Controller", () => {
       expect(response.body).toHaveProperty("teams");
       expect(response.body).toHaveProperty("enrollments");
       expect(response.body).toHaveProperty("eventSubscriptions");
+      expect(response.body).toHaveProperty("venueBookings");
     });
 
     it("should return 404 if user not found", async () => {

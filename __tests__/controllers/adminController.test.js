@@ -9,6 +9,7 @@ jest.mock("../../models/Team");
 jest.mock("../../models/Event");
 jest.mock("../../models/Course");
 jest.mock("../../models/CourseEnrollment");
+jest.mock("../../models/VenueBooking");
 
 const User = require("../../models/User");
 const Ticket = require("../../models/Ticket");
@@ -16,6 +17,7 @@ const Team = require("../../models/Team");
 const Event = require("../../models/Event");
 const Course = require("../../models/Course");
 const CourseEnrollment = require("../../models/CourseEnrollment");
+const VenueBooking = require("../../models/VenueBooking");
 
 // Reusable valid ObjectIds
 const adminId = new mongoose.Types.ObjectId().toString();
@@ -69,6 +71,15 @@ describe("Admin Controller", () => {
       User.find.mockReturnValue({
         sort: jest.fn().mockResolvedValue([{ name: "Test", email: "t@t.com" }]),
       });
+      VenueBooking.find.mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          populate: jest.fn().mockReturnValue({
+            populate: jest.fn().mockReturnValue({
+              sort: jest.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      });
 
       const response = await request(app).get("/api/admin/dashboard");
 
@@ -79,6 +90,7 @@ describe("Admin Controller", () => {
       expect(response.body).toHaveProperty("enrollments");
       expect(response.body).toHaveProperty("courses");
       expect(response.body).toHaveProperty("users");
+      expect(response.body).toHaveProperty("venueBookings");
     });
 
     // Moderator access is blocked at the route level (authorize middleware),

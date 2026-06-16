@@ -13,6 +13,11 @@ const {
 describe("sendTicketConfirmationEmail", () => {
   let mockSendMail;
 
+  beforeAll(() => {
+    process.env.EMAIL_USER = "test@example.com";
+    jest.resetModules();
+  });
+
   const event = {
     title: "Community Football",
     date: new Date("2026-05-15T18:00:00Z"),
