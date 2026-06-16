@@ -5,6 +5,7 @@ const CourseEnrollment = require("../models/CourseEnrollment");
 const Course = require("../models/Course");
 const Team = require("../models/Team");
 const Event = require("../models/Event");
+const VenueBooking = require("../models/VenueBooking");
 
 // ── GET /admin/dashboard ──────────────────────────────────────────────────────
 // Admin only.
@@ -38,7 +39,13 @@ exports.getDashboard = async (req, res) => {
       createdAt: -1,
     });
 
-    res.json({ tickets, events, teams, enrollments, courses, users });
+    const venueBookings = await VenueBooking.find()
+      .populate("venue", "name street city")
+      .populate("user", "name email")
+      .populate("slot", "date startTime endTime")
+      .sort({ createdAt: -1 });
+
+    res.json({ tickets, events, teams, enrollments, courses, users, venueBookings });
   } catch (err) {
     console.error("Dashboard error:", err);
     res.status(500).json({ error: "Failed to load dashboard" });

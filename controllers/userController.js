@@ -3,6 +3,7 @@ const Ticket = require("../models/Ticket");
 const Team = require("../models/Team");
 const CourseEnrollment = require("../models/CourseEnrollment");
 const EventSubscription = require("../models/EventSubscription");
+const VenueBooking = require("../models/VenueBooking");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const bcrypt = require("bcryptjs");
 const {
@@ -236,12 +237,18 @@ exports.getProfile = async (req, res) => {
       );
     }
 
+    const venueBookings = await VenueBooking.find({ user: req.user.id })
+      .populate("venue", "name street city")
+      .populate("slot", "date startTime endTime")
+      .sort({ createdAt: -1 });
+
     res.json({
       user: { name: user.name, email: user.email, role: user.role },
       tickets,
       teams,
       enrollments,
       eventSubscriptions,
+      venueBookings,
     });
   } catch (err) {
     console.error("Profile fetch error:", err);

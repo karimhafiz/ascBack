@@ -3,6 +3,7 @@ const Team = require("../models/Team");
 const Event = require("../models/Event");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const { sendTeamRegistrationEmail, sendTeamUpdateEmail } = require("../utils/emailUtils");
+const { generateUniqueCode } = require("../utils/ticketUtils");
 
 // Get a single team by ID
 exports.getTeam = async (req, res) => {
@@ -54,6 +55,7 @@ exports.registerTeam = async (req, res) => {
     }
 
     // Upsert: find existing unpaid team for this manager + event, or create new
+    const teamCode = await generateUniqueCode("TEAM", Team, "teamCode");
     const team = await Team.findOneAndUpdate(
       { event: eventId, "manager.email": manager.email, paid: false },
       {
@@ -62,6 +64,7 @@ exports.registerTeam = async (req, res) => {
           manager,
           paid: false,
         },
+        $setOnInsert: { teamCode },
       },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
