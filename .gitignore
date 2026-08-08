@@ -3,3 +3,4 @@ uploads/
 .env*
 .DS_Store
 CLAUDE.md
+.vercel
