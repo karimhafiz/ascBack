@@ -29,7 +29,7 @@ async function deleteCloudinaryImage(publicIdOrUrl, folder) {
     publicId = folder ? `${folder}/${nameWithoutExt}` : nameWithoutExt;
   }
 
-  await cloudinary.uploader.destroy(publicId);
+  await cloudinary.uploader.destroy(publicId, { invalidate: true });
 }
 
 module.exports = { deleteCloudinaryImage };

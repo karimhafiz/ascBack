@@ -51,6 +51,7 @@ const usersRoutes = require("./routes/users");
 const teamsRoutes = require("./routes/teams");
 const adminRoutes = require("./routes/admin");
 const pageContentRoutes = require("./routes/pageContent");
+const pageContentRequestRoutes = require("./routes/pageContentRequests");
 const courseRoutes = require("./routes/courses");
 const venueRoutes = require("./routes/venues");
 
@@ -71,6 +72,7 @@ app.use("/users", usersRoutes);
 app.use("/admin", adminRoutes);
 app.use("/teams", teamsRoutes);
 app.use("/pageContent", pageContentRoutes);
+app.use("/pageContentRequests", pageContentRequestRoutes);
 app.use("/courses", courseRoutes);
 app.use("/venues", venueRoutes);
 
