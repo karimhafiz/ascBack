@@ -520,4 +520,66 @@ describe("Payment Routes — Integration", () => {
       expect(res.body.error).toBe("Failed to retrieve session");
     });
   });
+
+  // ─── GET /guest-order/:sessionId — Guest order lookup ──────────────────────
+
+  describe("GET /api/payments/guest-order/:sessionId", () => {
+    it("returns tickets and order details for a paid session", async () => {
+      mockStripe.checkout.sessions.retrieve.mockResolvedValue({
+        id: "cs_test_123",
+        payment_status: "paid",
+        customer_email: "guest@test.com",
+        amount_total: 2000,
+        metadata: { quantity: "2" },
+      });
+
+      Ticket.find.mockReturnValue({
+        populate: jest.fn().mockResolvedValue([{ _id: "t1" }, { _id: "t2" }]),
+      });
+
+      const res = await request(app).get("/api/payments/guest-order/cs_test_123");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        tickets: [{ _id: "t1" }, { _id: "t2" }],
+        email: "guest@test.com",
+        amountTotal: 20,
+        quantity: 2,
+      });
+    });
+
+    it("returns 404 when the session was not paid", async () => {
+      mockStripe.checkout.sessions.retrieve.mockResolvedValue({
+        id: "cs_unpaid",
+        payment_status: "unpaid",
+      });
+
+      const res = await request(app).get("/api/payments/guest-order/cs_unpaid");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Order not found");
+    });
+
+    it("returns 404 when no tickets exist for the session", async () => {
+      mockStripe.checkout.sessions.retrieve.mockResolvedValue({
+        id: "cs_test_456",
+        payment_status: "paid",
+      });
+      Ticket.find.mockReturnValue({ populate: jest.fn().mockResolvedValue([]) });
+
+      const res = await request(app).get("/api/payments/guest-order/cs_test_456");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("No tickets found for this order");
+    });
+
+    it("returns 500 if Stripe retrieval fails", async () => {
+      mockStripe.checkout.sessions.retrieve.mockRejectedValue(new Error("boom"));
+
+      const res = await request(app).get("/api/payments/guest-order/cs_bad");
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Failed to fetch order details");
+    });
+  });
 });
