@@ -1,7 +1,7 @@
 const jwt = require("jsonwebtoken");
-const authenticateToken = require("../../middleware/authMiddleware");
+const authMiddleware = require("../../middleware/authMiddleware");
 
-describe("authenticateToken middleware", () => {
+describe("authMiddleware middleware", () => {
   let req, res, next;
 
   beforeEach(() => {
@@ -14,7 +14,7 @@ describe("authenticateToken middleware", () => {
   });
 
   it("should return 401 if token is missing", () => {
-    authenticateToken(req, res, next);
+    authMiddleware(req, res, next);
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith({ message: "Token is missing" });
     expect(next).not.toHaveBeenCalled();
@@ -25,7 +25,7 @@ describe("authenticateToken middleware", () => {
     jest.spyOn(jwt, "verify").mockImplementation(() => {
       throw new Error("Invalid token");
     });
-    authenticateToken(req, res, next);
+    authMiddleware(req, res, next);
     expect(res.status).toHaveBeenCalledWith(403);
     expect(res.json).toHaveBeenCalledWith({ message: "Invalid token" });
     expect(next).not.toHaveBeenCalled();
@@ -36,7 +36,7 @@ describe("authenticateToken middleware", () => {
     req.headers["authorization"] = "Bearer validtoken";
     const decoded = { id: "123" };
     jest.spyOn(jwt, "verify").mockReturnValue(decoded);
-    authenticateToken(req, res, next);
+    authMiddleware(req, res, next);
     expect(req.user).toEqual(decoded);
     expect(next).toHaveBeenCalled();
     jwt.verify.mockRestore();

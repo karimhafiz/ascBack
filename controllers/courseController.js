@@ -9,6 +9,7 @@ const {
   sendSubscriptionCancellationEmail,
 } = require("../utils/emailUtils");
 const { generateUniqueCode } = require("../utils/ticketUtils");
+const { respondStripeOutage } = require("../utils/stripeErrorUtils");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 // Stripe moved current_period_end from subscription to subscription item
@@ -367,6 +368,7 @@ exports.enrollInCourse = async (req, res) => {
 
     res.json({ url: session.url });
   } catch (err) {
+    if (respondStripeOutage(res, err, "courseController.enrollInCourse")) return;
     console.error("Error processing enrollment:", err);
     res.status(500).json({ error: "Failed to process enrollment" });
   }
@@ -581,6 +583,7 @@ exports.cancelSubscription = async (req, res) => {
       currentPeriodEnd: periodEnd,
     });
   } catch (err) {
+    if (respondStripeOutage(res, err, "courseController.cancelSubscription")) return;
     console.error("Error cancelling subscription:", err);
     res.status(500).json({ error: "Failed to cancel subscription" });
   }
@@ -691,6 +694,7 @@ exports.reactivateSubscription = async (req, res) => {
 
     return res.json({ url: session.url });
   } catch (err) {
+    if (respondStripeOutage(res, err, "courseController.reactivateSubscription")) return;
     console.error("Error reactivating subscription:", err);
     res.status(500).json({ error: "Failed to reactivate subscription" });
   }
@@ -863,6 +867,7 @@ exports.addParticipant = async (req, res) => {
       participants: updatedEnrollment.participants,
     });
   } catch (err) {
+    if (respondStripeOutage(res, err, "courseController.addParticipant")) return;
     console.error("Error adding participant:", err);
     res.status(500).json({ error: "Failed to add participant" });
   }
@@ -973,6 +978,7 @@ exports.removeParticipant = async (req, res) => {
       participants: updatedEnrollment.participants,
     });
   } catch (err) {
+    if (respondStripeOutage(res, err, "courseController.removeParticipant")) return;
     console.error("Error removing participant:", err);
     res.status(500).json({ error: "Failed to remove participant" });
   }

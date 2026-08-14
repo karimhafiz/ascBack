@@ -6,6 +6,7 @@ const Event = require("../models/Event");
 const EventSubscription = require("../models/EventSubscription");
 const User = require("../models/User");
 const { sendTicketConfirmationEmail } = require("../utils/emailUtils");
+const { respondStripeOutage } = require("../utils/stripeErrorUtils");
 
 /**
  * Verify an email domain has MX records (i.e. can actually receive mail).
@@ -124,6 +125,7 @@ const buildCheckoutSession = async ({ email, eventId, rawQuantity, res }) => {
 
     res.json({ url: session.url });
   } catch (err) {
+    if (respondStripeOutage(res, err, "ticketPaymentController.buildCheckoutSession")) return;
     console.error("Stripe session creation error:", err);
     res.status(500).json({ error: "Failed to create checkout session" });
   }
@@ -151,12 +153,10 @@ exports.createGuestCheckoutSession = async (req, res) => {
   // Verify the email domain can actually receive mail
   const emailDomainValid = await verifyEmailDomain(email.trim().toLowerCase());
   if (!emailDomainValid) {
-    return res
-      .status(400)
-      .json({
-        error:
-          "This email domain does not appear to accept emails. Please use a valid email address.",
-      });
+    return res.status(400).json({
+      error:
+        "This email domain does not appear to accept emails. Please use a valid email address.",
+    });
   }
 
   // Guests cannot create subscriptions — they require an authenticated account

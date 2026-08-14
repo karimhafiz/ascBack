@@ -9,6 +9,7 @@ const {
   sendVenueBookingCancellationEmail,
 } = require("../utils/emailUtils");
 const { generateUniqueCode } = require("../utils/ticketUtils");
+const { respondStripeOutage } = require("../utils/stripeErrorUtils");
 
 const DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
@@ -422,8 +423,9 @@ exports.createVenueBookingCheckout = async (req, res) => {
 
     res.json({ sessionId: session.id, url: session.url });
   } catch (error) {
+    if (respondStripeOutage(res, error, "venueController.createVenueBookingCheckout")) return;
     console.error("Error creating venue booking checkout:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to create checkout session" });
   }
 };
 

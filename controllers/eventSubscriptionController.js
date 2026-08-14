@@ -7,6 +7,7 @@ const {
   sendEventSubscriptionEmail,
   sendEventSubscriptionCancellationEmail,
 } = require("../utils/emailUtils");
+const { respondStripeOutage } = require("../utils/stripeErrorUtils");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 // Stripe moved current_period_end from subscription to subscription item
@@ -263,6 +264,7 @@ exports.cancelSubscription = async (req, res) => {
       currentPeriodEnd: periodEnd,
     });
   } catch (err) {
+    if (respondStripeOutage(res, err, "eventSubscriptionController.cancelSubscription")) return;
     console.error("Error cancelling subscription:", err);
     res.status(500).json({ error: "Failed to cancel subscription" });
   }
@@ -362,6 +364,7 @@ exports.reactivateSubscription = async (req, res) => {
 
     return res.json({ url: session.url });
   } catch (err) {
+    if (respondStripeOutage(res, err, "eventSubscriptionController.reactivateSubscription")) return;
     console.error("Error reactivating subscription:", err);
     res.status(500).json({ error: "Failed to reactivate subscription" });
   }

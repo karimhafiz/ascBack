@@ -3,7 +3,7 @@ const express = require("express");
 const path = require("path");
 const helmet = require("helmet");
 const connectDB = require("./config/db"); // Import the database connection function
-
+const mongoose = require("mongoose");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 
@@ -46,7 +46,7 @@ app.use(cookieParser());
 
 const eventRoutes = require("./routes/events");
 const ticketRoutes = require("./routes/tickets");
-const paymentRoutes = require("./routes/payments");
+const ticketPaymentRoutes = require("./routes/ticketPayment");
 const usersRoutes = require("./routes/users");
 const teamsRoutes = require("./routes/teams");
 const adminRoutes = require("./routes/admin");
@@ -61,11 +61,11 @@ app.use(async (req, res, next) => {
     await connectDB();
     next();
   } catch {
-    res.status(500).json({ error: "Database connection failed" });
+    res.status(503).json({ error: "Database connection failed" });
   }
 });
 
-app.use("/payments", paymentRoutes);
+app.use("/payments", ticketPaymentRoutes);
 app.use("/events", eventRoutes);
 app.use("/tickets", ticketRoutes);
 app.use("/users", usersRoutes);
@@ -77,9 +77,12 @@ app.use("/courses", courseRoutes);
 app.use("/venues", venueRoutes);
 
 app.get("/", (req, res) => {
-  res.send("Event Ticketing API is running...");
+  const dbConnected = mongoose.connection.readyState === 1;
+  res.status(dbConnected ? 200 : 503).json({
+    status: dbConnected ? "healthy" : "degraded",
+    db: dbConnected ? "connected" : "disconnected",
+  });
 });
-
 app.use((err, req, res, next) => {
   console.error("GLOBAL ERROR:", err.message, err.stack);
   const message = process.env.NODE_ENV === "production" ? "Internal server error" : err.message;
