@@ -14,6 +14,7 @@ const {
   clearRefreshTokenCookie,
   setRefreshTokenExpiration,
 } = require("../utils/tokenUtils");
+const logger = require("../utils/logger");
 
 exports.register = async (req, res) => {
   try {
@@ -53,7 +54,7 @@ exports.register = async (req, res) => {
     await user.save();
     res.status(201).json({ message: "User registered successfully" });
   } catch (err) {
-    console.error("Registration error:", err);
+    logger.error(err, "Registration error");
     res.status(500).json({ error: "Server error" });
   }
 };
@@ -70,9 +71,13 @@ exports.login = async (req, res) => {
     }
 
     const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ error: "Invalid credentials" });
+    if (!user) {
+      logger.warn({ email }, "login failed - unknown email");
+      return res.status(400).json({ error: "Invalid credentials" });
+    }
 
     if (user.authProvider === "google" || !user.password) {
+      logger.warn({ email }, "login failed - google-only account");
       return res.status(400).json({
         error:
           "This account uses Google Sign-In. Please log in with Google or register with a password.",
@@ -81,9 +86,15 @@ exports.login = async (req, res) => {
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
+    if (!isMatch) {
+      logger.warn({ email }, "login failed - bad password");
+      return res.status(400).json({ error: "Invalid credentials" });
+    }
 
-    if (user.isBanned) return res.status(403).json({ error: "Account suspended." });
+    if (user.isBanned) {
+      logger.warn({ userId: user._id, email }, "login blocked - account banned");
+      return res.status(403).json({ error: "Account suspended." });
+    }
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken();
@@ -94,12 +105,14 @@ exports.login = async (req, res) => {
 
     setRefreshTokenCookie(res, refreshToken);
 
+    logger.info({ userId: user._id, email: user.email }, "login success");
+
     res.json({
       accessToken,
       user: { id: user._id, name: user.name, email: user.email, role: user.role },
     });
   } catch (err) {
-    console.error("Login error:", err);
+    logger.error(err, "Login error");
     res.status(500).json({ error: "Server error" });
   }
 };
@@ -143,7 +156,7 @@ exports.refresh = async (req, res) => {
       user: { id: user._id, name: user.name, email: user.email, role: user.role },
     });
   } catch (err) {
-    console.error("Refresh error:", err);
+    logger.error(err, "Refresh error");
     res.status(500).json({ error: "Server error" });
   }
 };
@@ -160,7 +173,7 @@ exports.logout = async (req, res) => {
     clearRefreshTokenCookie(res);
     res.json({ message: "Logged out successfully" });
   } catch (err) {
-    console.error("Logout error:", err);
+    logger.error(err, "Logout error");
     res.status(500).json({ error: "Server error" });
   }
 };
@@ -251,7 +264,7 @@ exports.getProfile = async (req, res) => {
       venueBookings,
     });
   } catch (err) {
-    console.error("Profile fetch error:", err);
+    logger.error(err, "Profile fetch error");
     res.status(500).json({ error: "Failed to load profile" });
   }
 };

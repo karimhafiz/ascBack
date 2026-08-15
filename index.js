@@ -6,6 +6,7 @@ const connectDB = require("./config/db"); // Import the database connection func
 const mongoose = require("mongoose");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
+const logger = require("./utils/logger");
 
 const app = express();
 
@@ -61,7 +62,9 @@ app.use(async (req, res, next) => {
     await connectDB();
     next();
   } catch {
-    res.status(503).json({ error: "Database connection failed" });
+    const errorMessage = "Database connection failed";
+    logger.error(errorMessage);
+    res.status(503).json({ error: errorMessage });
   }
 });
 
@@ -84,7 +87,7 @@ app.get("/", (req, res) => {
   });
 });
 app.use((err, req, res, next) => {
-  console.error("GLOBAL ERROR:", err.message, err.stack);
+  logger.error({ err, path: req.path }, "Request failed");
   const message = process.env.NODE_ENV === "production" ? "Internal server error" : err.message;
   res.status(500).json({ error: message });
 });

@@ -10,6 +10,7 @@ const {
 } = require("../utils/emailUtils");
 const { generateUniqueCode } = require("../utils/ticketUtils");
 const { respondStripeOutage } = require("../utils/stripeErrorUtils");
+const logger = require("../utils/logger");
 
 const DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
@@ -52,7 +53,7 @@ exports.createVenue = async (req, res) => {
     await venue.save();
     res.status(201).json({ message: "Venue created successfully", venue });
   } catch (error) {
-    console.error("Error creating venue:", error);
+    logger.error(error, "Error creating venue");
     res.status(500).json({ error: error.message });
   }
 };
@@ -64,7 +65,7 @@ exports.getVenues = async (req, res) => {
     );
     res.json(venues);
   } catch (error) {
-    console.error("Error fetching venues:", error);
+    logger.error(error, "Error fetching venues");
     res.status(500).json({ error: error.message });
   }
 };
@@ -75,7 +76,7 @@ exports.getVenue = async (req, res) => {
     if (!venue) return res.status(404).json({ error: "Venue not found" });
     res.json(venue);
   } catch (error) {
-    console.error("Error fetching venue:", error);
+    logger.error(error, "Error fetching venue");
     res.status(500).json({ error: error.message });
   }
 };
@@ -88,7 +89,7 @@ exports.updateVenue = async (req, res) => {
     await venue.save();
     res.json({ message: "Venue updated successfully", venue });
   } catch (error) {
-    console.error("Error updating venue:", error);
+    logger.error(error, "Error updating venue");
     res.status(500).json({ error: error.message });
   }
 };
@@ -145,7 +146,7 @@ exports.createVenueSlots = async (req, res) => {
       return res
         .status(400)
         .json({ error: "One or more slots already exist for that date and time" });
-    console.error("Error creating slots:", error);
+    logger.error(error, "Error creating slots");
     res.status(500).json({ error: error.message });
   }
 };
@@ -227,7 +228,7 @@ exports.generateScheduleSlots = async (req, res) => {
       throw error;
     }
   } catch (error) {
-    console.error("Error generating schedule slots:", error);
+    logger.error(error, "Error generating schedule slots");
     res.status(500).json({ error: error.message });
   }
 };
@@ -294,7 +295,7 @@ exports.getAvailableSlots = async (req, res) => {
 
     res.json(slots);
   } catch (error) {
-    console.error("Error fetching available slots:", error);
+    logger.error(error, "Error fetching available slots");
     res.status(500).json({ error: error.message });
   }
 };
@@ -332,7 +333,7 @@ exports.getAllSlots = async (req, res) => {
     const slots = await VenueSlot.find(query).sort({ date: 1, startTime: 1 });
     res.json(slots);
   } catch (error) {
-    console.error("Error fetching all slots:", error);
+    logger.error(error, "Error fetching all slots");
     res.status(500).json({ error: error.message });
   }
 };
@@ -360,7 +361,7 @@ exports.deleteVenueSlot = async (req, res) => {
     await VenueSlot.findByIdAndDelete(slotId);
     res.json({ message: "Slot deleted successfully" });
   } catch (error) {
-    console.error("Error deleting slot:", error);
+    logger.error(error, "Error deleting slot");
     res.status(500).json({ error: error.message });
   }
 };
@@ -424,7 +425,7 @@ exports.createVenueBookingCheckout = async (req, res) => {
     res.json({ sessionId: session.id, url: session.url });
   } catch (error) {
     if (respondStripeOutage(res, error, "venueController.createVenueBookingCheckout")) return;
-    console.error("Error creating venue booking checkout:", error);
+    logger.error(error, "Error creating venue booking checkout");
     res.status(500).json({ error: "Failed to create checkout session" });
   }
 };
@@ -495,6 +496,10 @@ exports.confirmVenueBooking = async (req, res) => {
       });
     } catch (txError) {
       if (txError.status === 400) {
+        logger.warn(
+          { venueId, slotId, paymentIntent: session.payment_intent },
+          "Venue slot no longer available at confirmation, issuing refund"
+        );
         await stripe.refunds.create({ payment_intent: session.payment_intent });
         return res
           .status(400)
@@ -515,7 +520,7 @@ exports.confirmVenueBooking = async (req, res) => {
 
     res.redirect(`${process.env.FRONT_END_URL}venue-booking-confirmation?bookingId=${booking._id}`);
   } catch (error) {
-    console.error("Error confirming venue booking:", error);
+    logger.error(error, "Error confirming venue booking");
     res.redirect(`${process.env.FRONT_END_URL}venues/booking`);
   }
 };
@@ -532,7 +537,7 @@ exports.getUserBookings = async (req, res) => {
 
     res.json(bookings);
   } catch (error) {
-    console.error("Error fetching user bookings:", error);
+    logger.error(error, "Error fetching user bookings");
     res.status(500).json({ error: error.message });
   }
 };
@@ -552,12 +557,16 @@ exports.getBookingDetails = async (req, res) => {
       req.user.role !== "admin" &&
       req.user.role !== "moderator"
     ) {
+      logger.warn(
+        { userId: req.user.id, bookingId: req.params.bookingId },
+        "Unauthorised attempt to view venue booking"
+      );
       return res.status(403).json({ error: "Not authorized to view this booking" });
     }
 
     res.json(booking);
   } catch (error) {
-    console.error("Error fetching booking details:", error);
+    logger.error(error, "Error fetching booking details");
     res.status(500).json({ error: error.message });
   }
 };
@@ -571,6 +580,10 @@ exports.cancelBooking = async (req, res) => {
     if (!booking) return res.status(404).json({ error: "Booking not found" });
 
     if (booking.user.toString() !== req.user.id.toString() && req.user.role !== "admin") {
+      logger.warn(
+        { userId: req.user.id, bookingId },
+        "Unauthorised attempt to cancel venue booking"
+      );
       return res.status(403).json({ error: "Not authorized to cancel this booking" });
     }
     if (booking.status === "cancelled")
@@ -583,7 +596,7 @@ exports.cancelBooking = async (req, res) => {
         await stripe.refunds.create({ payment_intent: booking.stripePaymentId });
         booking.paymentStatus = "refunded";
       } catch (stripeError) {
-        console.error("Refund error:", stripeError);
+        logger.error(stripeError, "Refund error");
         return res.status(500).json({ error: "Failed to process refund" });
       }
     }
@@ -624,7 +637,7 @@ exports.cancelBooking = async (req, res) => {
 
     res.json({ message: "Booking cancelled successfully", booking });
   } catch (error) {
-    console.error("Error cancelling booking:", error);
+    logger.error(error, "Error cancelling booking");
     res.status(500).json({ error: error.message });
   }
 };
@@ -643,7 +656,7 @@ exports.getAllBookings = async (req, res) => {
 
     res.json(bookings);
   } catch (error) {
-    console.error("Error fetching bookings:", error);
+    logger.error(error, "Error fetching bookings");
     res.status(500).json({ error: error.message });
   }
 };
@@ -660,7 +673,7 @@ exports.completeBooking = async (req, res) => {
 
     res.json({ message: "Booking marked as completed", booking });
   } catch (error) {
-    console.error("Error completing booking:", error);
+    logger.error(error, "Error completing booking");
     res.status(500).json({ error: error.message });
   }
 };

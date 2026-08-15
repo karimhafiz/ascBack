@@ -7,6 +7,7 @@ const {
   setRefreshTokenCookie,
   setRefreshTokenExpiration,
 } = require("../utils/tokenUtils");
+const logger = require("../utils/logger");
 
 // Initialize a client with the client ID from environment
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -43,7 +44,10 @@ exports.googleLogin = async (req, res) => {
       await user.save();
     }
 
-    if (user.isBanned) return res.status(403).json({ error: "Account Banned." });
+    if (user.isBanned) {
+      logger.warn({ userId: user._id, email }, "login blocked - account banned");
+      return res.status(403).json({ error: "Account Banned." });
+    }
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken();
@@ -54,12 +58,14 @@ exports.googleLogin = async (req, res) => {
 
     setRefreshTokenCookie(res, refreshToken);
 
+    logger.info({ userId: user._id, email: user.email }, "google login success");
+
     res.json({
       accessToken,
       user: { id: user._id, name: user.name, email: user.email, role: user.role, picture },
     });
   } catch (err) {
-    console.error("Google login error", err);
+    logger.error(err, "Google login error");
     res.status(500).json({ error: "Failed to verify Google token" });
   }
 };

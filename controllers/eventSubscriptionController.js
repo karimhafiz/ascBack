@@ -8,6 +8,7 @@ const {
   sendEventSubscriptionCancellationEmail,
 } = require("../utils/emailUtils");
 const { respondStripeOutage } = require("../utils/stripeErrorUtils");
+const logger = require("../utils/logger");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 // Stripe moved current_period_end from subscription to subscription item
@@ -18,7 +19,10 @@ function getSubPeriodEnd(sub) {
 function resolveCurrentPeriodEnd(sub, fallbackInterval = "month") {
   const periodTs = getSubPeriodEnd(sub);
   if (periodTs) return new Date(periodTs * 1000);
-  console.warn(`Missing current_period_end for sub ${sub.id}, using fallback`);
+  logger.warn(
+    { subscriptionId: sub.id },
+    "Missing current_period_end for subscription, using fallback"
+  );
   const now = new Date();
   if (fallbackInterval === "week") now.setDate(now.getDate() + 7);
   else now.setMonth(now.getMonth() + 1);
@@ -77,7 +81,7 @@ exports.handleSubscriptionSuccess = async (req, res) => {
             buyerEmail: subscription.buyerEmail,
             event,
             subscription,
-          }).catch((err) => console.error("Failed to send reactivation email:", err));
+          }).catch((err) => logger.error(err, "Failed to send reactivation email"));
         }
 
         return res.redirect(
@@ -150,12 +154,12 @@ exports.handleSubscriptionSuccess = async (req, res) => {
         buyerEmail: email,
         event,
         subscription: finalSubscription,
-      }).catch((err) => console.error("Failed to send subscription email:", err));
+      }).catch((err) => logger.error(err, "Failed to send subscription email"));
     }
 
     res.redirect(`${process.env.FRONT_END_URL}subscription-confirmation?eventId=${eventId}`);
   } catch (err) {
-    console.error("Subscription success error:", err);
+    logger.error(err, "Subscription success error");
     res.redirect(`${process.env.FRONT_END_URL}events`);
   }
 };
@@ -206,7 +210,7 @@ exports.getMySubscription = async (req, res) => {
 
     res.json({ subscription });
   } catch (err) {
-    console.error("Error fetching subscription:", err);
+    logger.error(err, "Error fetching subscription");
     res.status(500).json({ error: "Failed to fetch subscription" });
   }
 };
@@ -255,7 +259,7 @@ exports.cancelSubscription = async (req, res) => {
         buyerEmail: subscription.buyerEmail,
         event,
         currentPeriodEnd: periodEnd,
-      }).catch((err) => console.error("Failed to send cancellation email:", err));
+      }).catch((err) => logger.error(err, "Failed to send cancellation email"));
     }
 
     res.json({
@@ -265,7 +269,7 @@ exports.cancelSubscription = async (req, res) => {
     });
   } catch (err) {
     if (respondStripeOutage(res, err, "eventSubscriptionController.cancelSubscription")) return;
-    console.error("Error cancelling subscription:", err);
+    logger.error(err, "Error cancelling subscription");
     res.status(500).json({ error: "Failed to cancel subscription" });
   }
 };
@@ -365,7 +369,7 @@ exports.reactivateSubscription = async (req, res) => {
     return res.json({ url: session.url });
   } catch (err) {
     if (respondStripeOutage(res, err, "eventSubscriptionController.reactivateSubscription")) return;
-    console.error("Error reactivating subscription:", err);
+    logger.error(err, "Error reactivating subscription");
     res.status(500).json({ error: "Failed to reactivate subscription" });
   }
 };
@@ -384,7 +388,7 @@ exports.handleWebhook = async (req, res) => {
       process.env.STRIPE_EVENT_SUBSCRIPTION_WEBHOOK_SECRET
     );
   } catch (err) {
-    console.error("Webhook signature error:", err.message);
+    logger.error(err, "Webhook signature error");
     return res.status(400).json({ error: "Webhook signature verification failed" });
   }
 
@@ -486,7 +490,7 @@ exports.handleWebhook = async (req, res) => {
 
     res.json({ received: true });
   } catch (err) {
-    console.error("Webhook handler error:", err);
+    logger.error(err, "Webhook handler error");
     res.status(500).json({ error: "Webhook processing failed" });
   }
 };
