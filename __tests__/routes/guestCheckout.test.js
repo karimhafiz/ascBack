@@ -13,6 +13,13 @@ jest.mock("../../models/Event");
 jest.mock("../../models/EventSubscription");
 jest.mock("../../models/User");
 
+// This route module attaches a shared rate limiter at require-time, so its
+// hit counter persists across every test in this file regardless of the
+// fresh express() app each test builds. Not what's under test here — mock
+// it to a pass-through so route-handler behavior isn't at the mercy of how
+// many requests earlier tests happened to make.
+jest.mock("express-rate-limit", () => () => (req, res, next) => next());
+
 // No auth middleware mock — guest route has no auth
 const mockStripe = {
   checkout: {
@@ -38,7 +45,7 @@ jest.mock("../../middleware/authMiddleware", () => (req, res, next) => {
 const Event = require("../../models/Event");
 const Ticket = require("../../models/Ticket");
 const User = require("../../models/User");
-const paymentRoutes = require("../../routes/payments");
+const paymentRoutes = require("../../routes/ticketPayment");
 
 const validEventId = new mongoose.Types.ObjectId().toString();
 
