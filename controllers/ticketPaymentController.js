@@ -175,10 +175,13 @@ exports.createGuestCheckoutSession = async (req, res) => {
 
 // GET /payments/success — Stripe redirect after payment
 exports.handleSuccess = async (req, res) => {
-  const { session_id, eventId } = req.query;
+  const { session_id, eventId: eventIdParam } = req.query;
 
   if (!session_id) {
-    logger.warn({ eventId, ip: req.ip }, "payment success redirect missing session_id");
+    logger.warn(
+      { eventId: eventIdParam, ip: req.ip },
+      "payment success redirect missing session_id"
+    );
     return res.status(400).json({ error: "Missing session_id" });
   }
 
@@ -187,14 +190,14 @@ exports.handleSuccess = async (req, res) => {
 
     // Subscription checkouts are handled by eventSubscriptionController
     if (session.mode === "subscription") {
-      const eventId = session.metadata?.eventId;
+      const subscriptionEventId = session.metadata?.eventId;
       return res.redirect(
-        `${process.env.BACK_END_URL}events/${eventId}/subscription-success?session_id=${session_id}`
+        `${process.env.BACK_END_URL}events/${subscriptionEventId}/subscription-success?session_id=${session_id}`
       );
     }
 
     if (session.payment_status !== "paid") {
-      logger.warn({ eventId }, "Payment could not be completed");
+      logger.warn({ eventId: eventIdParam }, "Payment could not be completed");
       return res.status(400).json({ error: "Payment not completed" });
     }
 
