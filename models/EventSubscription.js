@@ -21,6 +21,8 @@ const eventSubscriptionSchema = new mongoose.Schema(
     currentPeriodEnd: { type: Date },
     lastStripeEventTimestamp: { type: Number, default: null },
     quantity: { type: Number, default: 1 },
+    // Cumulative — incremented on the initial checkout and every renewal invoice.
+    totalAmountPaid: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

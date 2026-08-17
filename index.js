@@ -55,6 +55,7 @@ const pageContentRoutes = require("./routes/pageContent");
 const pageContentRequestRoutes = require("./routes/pageContentRequests");
 const courseRoutes = require("./routes/courses");
 const venueRoutes = require("./routes/venues");
+const statsRoutes = require("./routes/stats");
 
 // Connect to MongoDB per-request (cached after first connection)
 app.use(async (req, res, next) => {
@@ -78,6 +79,7 @@ app.use("/pageContent", pageContentRoutes);
 app.use("/pageContentRequests", pageContentRequestRoutes);
 app.use("/courses", courseRoutes);
 app.use("/venues", venueRoutes);
+app.use("/stats", statsRoutes);
 
 app.get("/", (req, res) => {
   const dbConnected = mongoose.connection.readyState === 1;

@@ -70,7 +70,11 @@ exports.handleSubscriptionSuccess = async (req, res) => {
 
       const subscription = await EventSubscription.findByIdAndUpdate(
         reactivateId,
-        { $set, $unset: { pendingSessionId: 1 } },
+        {
+          $set,
+          $unset: { pendingSessionId: 1 },
+          $inc: { totalAmountPaid: (session.amount_total ?? 0) / 100 },
+        },
         { new: true }
       );
 
@@ -105,6 +109,8 @@ exports.handleSubscriptionSuccess = async (req, res) => {
           subFields.currentPeriodEnd = resolveCurrentPeriodEnd(sub);
         }
 
+        const amountPaid = (session.amount_total ?? 0) / 100;
+
         // Try to atomically update a pending subscription first
         finalSubscription = await EventSubscription.findOneAndUpdate(
           { pendingSessionId: session.id, status: "pending" },
@@ -115,6 +121,7 @@ exports.handleSubscriptionSuccess = async (req, res) => {
               ...subFields,
             },
             $unset: { pendingSessionId: 1 },
+            $inc: { totalAmountPaid: amountPaid },
           },
           { new: true, session: mongoSession }
         );
@@ -129,6 +136,7 @@ exports.handleSubscriptionSuccess = async (req, res) => {
             paymentId: session.id,
             status: "active",
             quantity: parseInt(session.metadata?.quantity || "1", 10),
+            totalAmountPaid: amountPaid,
             ...subFields,
           };
 
@@ -415,10 +423,13 @@ exports.handleWebhook = async (req, res) => {
               ],
             },
             {
-              subscriptionStatus: "active",
-              currentPeriodEnd: resolveCurrentPeriodEnd(sub),
-              status: "active",
-              lastStripeEventTimestamp: eventTimestamp,
+              $set: {
+                subscriptionStatus: "active",
+                currentPeriodEnd: resolveCurrentPeriodEnd(sub),
+                status: "active",
+                lastStripeEventTimestamp: eventTimestamp,
+              },
+              $inc: { totalAmountPaid: (invoice.amount_paid ?? 0) / 100 },
             }
           );
         }

@@ -238,6 +238,7 @@ exports.handleSuccess = async (req, res) => {
     try {
       await mongoSession.withTransaction(async () => {
         ticketIds = [];
+        const perTicketAmount = amountPaid / qty;
         for (let i = 0; i < qty; i++) {
           const ticket = new Ticket({
             eventId,
@@ -245,6 +246,7 @@ exports.handleSuccess = async (req, res) => {
             paymentId: session.id,
             status: "paid",
             user: user?._id ?? null,
+            totalAmountPaid: perTicketAmount,
           });
           await ticket.save({ session: mongoSession });
           ticketIds.push(ticket._id);

@@ -8,6 +8,7 @@ const ticketSchema = new mongoose.Schema(
     status: { type: String, enum: ["pending", "paid", "failed", "canceled"], default: "pending" },
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     paymentId: { type: String }, // Stripe session ID — used for grouping bulk purchase tickets
+    totalAmountPaid: { type: Number, default: 0 }, // this ticket's share of the purchase
     ticketCode: { type: String, unique: true, sparse: true }, // TKT-XXXXXX
     checkedIn: { type: Boolean, default: false },
     checkedInAt: { type: Date },

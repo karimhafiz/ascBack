@@ -23,6 +23,9 @@ const courseEnrollmentSchema = new mongoose.Schema(
     },
     currentPeriodEnd: { type: Date },
     lastStripeEventTimestamp: { type: Number, default: null },
+    // One-time enrollments: set once at creation. Subscription enrollments:
+    // cumulative, incremented on the initial checkout and every renewal invoice.
+    totalAmountPaid: { type: Number, default: 0 },
     participants: [
       {
         name: { type: String, required: true },

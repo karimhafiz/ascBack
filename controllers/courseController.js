@@ -412,7 +412,11 @@ exports.handleEnrollmentSuccess = async (req, res) => {
 
       const enrollment = await CourseEnrollment.findByIdAndUpdate(
         reactivateId,
-        { $set, $unset: { pendingSessionId: 1 } },
+        {
+          $set,
+          $unset: { pendingSessionId: 1 },
+          $inc: { totalAmountPaid: (session.amount_total ?? 0) / 100 },
+        },
         { new: true }
       );
 
@@ -449,6 +453,8 @@ exports.handleEnrollmentSuccess = async (req, res) => {
           subFields.currentPeriodEnd = resolveCurrentPeriodEnd(sub);
         }
 
+        const amountPaid = (session.amount_total ?? 0) / 100;
+
         // Try to atomically update a pending enrollment first
         finalEnrollment = await CourseEnrollment.findOneAndUpdate(
           { pendingSessionId: session.id, status: "pending" },
@@ -459,6 +465,7 @@ exports.handleEnrollmentSuccess = async (req, res) => {
               ...subFields,
             },
             $unset: { pendingSessionId: 1 },
+            $inc: { totalAmountPaid: amountPaid },
           },
           { new: true, session: mongoSession }
         );
@@ -478,6 +485,7 @@ exports.handleEnrollmentSuccess = async (req, res) => {
             paymentId: session.id,
             status: isSubscription ? "active" : "paid",
             participants: [],
+            totalAmountPaid: amountPaid,
             ...subFields,
           };
 
@@ -1136,10 +1144,13 @@ exports.handleWebhook = async (req, res) => {
               ],
             },
             {
-              subscriptionStatus: "active",
-              currentPeriodEnd: resolveCurrentPeriodEnd(sub),
-              status: "active",
-              lastStripeEventTimestamp: eventTimestamp,
+              $set: {
+                subscriptionStatus: "active",
+                currentPeriodEnd: resolveCurrentPeriodEnd(sub),
+                status: "active",
+                lastStripeEventTimestamp: eventTimestamp,
+              },
+              $inc: { totalAmountPaid: (invoice.amount_paid ?? 0) / 100 },
             }
           );
         }
