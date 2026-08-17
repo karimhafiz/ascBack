@@ -289,7 +289,6 @@ exports.handleSuccess = async (req, res) => {
     );
   } catch (err) {
     logger.error(err, "Payment for ticket failed");
-    console.error("Stripe success handler error:", err);
     res.status(500).json({ error: "Failed to process payment confirmation" });
   }
 };

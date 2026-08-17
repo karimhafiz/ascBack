@@ -10,6 +10,7 @@ const {
 } = require("../utils/emailUtils");
 const { generateUniqueCode } = require("../utils/ticketUtils");
 const { respondStripeOutage } = require("../utils/stripeErrorUtils");
+const logger = require("../utils/logger");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 // Stripe moved current_period_end from subscription to subscription item
@@ -20,7 +21,10 @@ function getSubPeriodEnd(sub) {
 function resolveCurrentPeriodEnd(sub, fallbackInterval = "month") {
   const periodTs = getSubPeriodEnd(sub);
   if (periodTs) return new Date(periodTs * 1000);
-  console.warn(`Missing current_period_end for sub ${sub.id}, using fallback`);
+  logger.warn(
+    { subscriptionId: sub.id },
+    "Missing current_period_end for subscription, using fallback"
+  );
   const now = new Date();
   if (fallbackInterval === "year") now.setFullYear(now.getFullYear() + 1);
   else now.setMonth(now.getMonth() + 1);
@@ -78,7 +82,7 @@ exports.getAllCourses = async (req, res) => {
     const courses = await Course.find().sort({ createdAt: -1 });
     res.json(courses);
   } catch (err) {
-    console.error("Error fetching courses:", err);
+    logger.error(err, "Error fetching courses");
     res.status(500).json({ error: "Failed to fetch courses" });
   }
 };
@@ -93,7 +97,7 @@ exports.getCourseById = async (req, res) => {
     if (!course) return res.status(404).json({ error: "Course not found" });
     res.json(course);
   } catch (err) {
-    console.error("Error fetching course:", err);
+    logger.error(err, "Error fetching course");
     res.status(500).json({ error: "Failed to fetch course" });
   }
 };
@@ -131,7 +135,7 @@ exports.createCourse = async (req, res) => {
 
     res.status(201).json({ message: "Course created successfully", course });
   } catch (err) {
-    console.error("Error creating course:", err);
+    logger.error(err, "Error creating course");
     res.status(500).json({ error: "Failed to create course" });
   }
 };
@@ -189,7 +193,7 @@ exports.updateCourse = async (req, res) => {
     );
     res.json({ message: "Course updated", course: updated });
   } catch (err) {
-    console.error("Error updating course:", err);
+    logger.error(err, "Error updating course");
     res.status(500).json({ error: "Failed to update course" });
   }
 };
@@ -209,7 +213,7 @@ exports.deleteCourse = async (req, res) => {
     await Course.findByIdAndDelete(req.params.id);
     res.json({ message: "Course deleted" });
   } catch (err) {
-    console.error("Error deleting course:", err);
+    logger.error(err, "Error deleting course");
     res.status(500).json({ error: "Failed to delete course" });
   }
 };
@@ -277,7 +281,7 @@ exports.enrollInCourse = async (req, res) => {
       await Course.findByIdAndUpdate(course._id, { $inc: { currentEnrollment: count } });
 
       sendCourseEnrollmentEmail({ buyerEmail: email, course, enrollment }).catch((err) =>
-        console.error("Failed to send course enrollment email:", err)
+        logger.error(err, "Failed to send course enrollment email")
       );
 
       return res.json({ message: "Enrolled successfully", enrollment });
@@ -369,7 +373,7 @@ exports.enrollInCourse = async (req, res) => {
     res.json({ url: session.url });
   } catch (err) {
     if (respondStripeOutage(res, err, "courseController.enrollInCourse")) return;
-    console.error("Error processing enrollment:", err);
+    logger.error(err, "Error processing enrollment");
     res.status(500).json({ error: "Failed to process enrollment" });
   }
 };
@@ -427,7 +431,7 @@ exports.handleEnrollmentSuccess = async (req, res) => {
             buyerEmail: enrollment.buyerEmail,
             course,
             enrollment,
-          }).catch((err) => console.error("Failed to send reactivation email:", err));
+          }).catch((err) => logger.error(err, "Failed to send reactivation email"));
         }
 
         return res.redirect(
@@ -509,13 +513,13 @@ exports.handleEnrollmentSuccess = async (req, res) => {
     const course = await Course.findById(courseId);
     if (course && finalEnrollment) {
       sendCourseEnrollmentEmail({ buyerEmail: email, course, enrollment: finalEnrollment }).catch(
-        (err) => console.error("Failed to send course enrollment email:", err)
+        (err) => logger.error(err, "Failed to send course enrollment email")
       );
     }
 
     res.redirect(`${process.env.FRONT_END_URL}course-confirmation?courseId=${courseId}`);
   } catch (err) {
-    console.error("Enrollment success error:", err);
+    logger.error(err, "Enrollment success error");
     res.redirect(`${process.env.FRONT_END_URL}courses`);
   }
 };
@@ -532,7 +536,7 @@ exports.getCourseEnrollments = async (req, res) => {
     );
     res.json(enrollments);
   } catch (err) {
-    console.error("Error fetching enrollments:", err);
+    logger.error(err, "Error fetching enrollments");
     res.status(500).json({ error: "Failed to fetch enrollments" });
   }
 };
@@ -582,7 +586,7 @@ exports.cancelSubscription = async (req, res) => {
         buyerEmail: enrollment.buyerEmail,
         course,
         currentPeriodEnd: periodEnd,
-      }).catch((err) => console.error("Failed to send cancellation email:", err));
+      }).catch((err) => logger.error(err, "Failed to send cancellation email"));
     }
 
     res.json({
@@ -592,7 +596,7 @@ exports.cancelSubscription = async (req, res) => {
     });
   } catch (err) {
     if (respondStripeOutage(res, err, "courseController.cancelSubscription")) return;
-    console.error("Error cancelling subscription:", err);
+    logger.error(err, "Error cancelling subscription");
     res.status(500).json({ error: "Failed to cancel subscription" });
   }
 };
@@ -703,7 +707,7 @@ exports.reactivateSubscription = async (req, res) => {
     return res.json({ url: session.url });
   } catch (err) {
     if (respondStripeOutage(res, err, "courseController.reactivateSubscription")) return;
-    console.error("Error reactivating subscription:", err);
+    logger.error(err, "Error reactivating subscription");
     res.status(500).json({ error: "Failed to reactivate subscription" });
   }
 };
@@ -744,7 +748,7 @@ exports.getMyEnrollment = async (req, res) => {
 
     res.json({ enrollment });
   } catch (err) {
-    console.error("Error fetching enrollment:", err);
+    logger.error(err, "Error fetching enrollment");
     res.status(500).json({ error: "Failed to fetch enrollment" });
   }
 };
@@ -808,7 +812,7 @@ exports.addParticipant = async (req, res) => {
           });
         }
       } catch (stripeErr) {
-        console.error("Stripe subscription update error:", stripeErr);
+        logger.error(stripeErr, "Stripe subscription update error");
         return res.status(502).json({
           error: "Failed to update subscription billing. Please try again.",
         });
@@ -858,7 +862,7 @@ exports.addParticipant = async (req, res) => {
             await stripe.subscriptionItems.update(subItem.id, { quantity: previousQuantity });
           }
         } catch (revertErr) {
-          console.error("Failed to revert Stripe subscription quantity:", revertErr);
+          logger.error(revertErr, "Failed to revert Stripe subscription quantity");
         }
       }
 
@@ -876,7 +880,7 @@ exports.addParticipant = async (req, res) => {
     });
   } catch (err) {
     if (respondStripeOutage(res, err, "courseController.addParticipant")) return;
-    console.error("Error adding participant:", err);
+    logger.error(err, "Error adding participant");
     res.status(500).json({ error: "Failed to add participant" });
   }
 };
@@ -939,7 +943,7 @@ exports.removeParticipant = async (req, res) => {
           });
         }
       } catch (stripeErr) {
-        console.error("Stripe subscription update error:", stripeErr);
+        logger.error(stripeErr, "Stripe subscription update error");
         return res.status(502).json({
           error: "Failed to update subscription billing. Please try again.",
         });
@@ -973,7 +977,7 @@ exports.removeParticipant = async (req, res) => {
             await stripe.subscriptionItems.update(subItem.id, { quantity: previousQuantity });
           }
         } catch (revertErr) {
-          console.error("Failed to revert Stripe subscription quantity:", revertErr);
+          logger.error(revertErr, "Failed to revert Stripe subscription quantity");
         }
       }
       throw txErr;
@@ -987,7 +991,7 @@ exports.removeParticipant = async (req, res) => {
     });
   } catch (err) {
     if (respondStripeOutage(res, err, "courseController.removeParticipant")) return;
-    console.error("Error removing participant:", err);
+    logger.error(err, "Error removing participant");
     res.status(500).json({ error: "Failed to remove participant" });
   }
 };
@@ -1045,7 +1049,7 @@ exports.editParticipant = async (req, res) => {
       participants: updated.participants,
     });
   } catch (err) {
-    console.error("Error editing participant:", err);
+    logger.error(err, "Error editing participant");
     res.status(500).json({ error: "Failed to edit participant" });
   }
 };
@@ -1099,7 +1103,7 @@ exports.updateEnrollment = async (req, res) => {
 
     res.json({ message: "Enrollment updated successfully.", enrollment: updated });
   } catch (err) {
-    console.error("Error updating enrollment:", err);
+    logger.error(err, "Error updating enrollment");
     res.status(500).json({ error: "Failed to update enrollment" });
   }
 };
@@ -1116,7 +1120,7 @@ exports.handleWebhook = async (req, res) => {
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
-    console.error("Webhook signature error:", err.message);
+    logger.error(err, "Webhook signature error");
     return res.status(400).json({ error: "Webhook signature verification failed" });
   }
 
@@ -1224,7 +1228,7 @@ exports.handleWebhook = async (req, res) => {
 
     res.json({ received: true });
   } catch (err) {
-    console.error("Webhook handler error:", err);
+    logger.error(err, "Webhook handler error");
     res.status(500).json({ error: "Webhook processing failed" });
   }
 };

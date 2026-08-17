@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Event = require("../models/Event");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
+const logger = require("../utils/logger");
 
 async function createStripeSubscription(event) {
   const product = await stripe.products.create({
@@ -59,7 +60,7 @@ exports.getAllEvents = async (req, res) => {
     const events = await Event.find();
     res.json(events);
   } catch (error) {
-    console.error("Error fetching events:", error);
+    logger.error(error, "Error fetching events");
     res.status(500).json({ error: "Failed to fetch events" });
   }
 };
@@ -77,7 +78,7 @@ exports.getEventById = async (req, res) => {
     }
     res.json(event);
   } catch (error) {
-    console.error("Error fetching event:", error);
+    logger.error(error, "Error fetching event");
     res.status(500).json({ error: "Failed to fetch event" });
   }
 };
@@ -120,7 +121,7 @@ exports.createEvent = async (req, res) => {
 
     res.status(201).json({ message: "Event created successfully", event: newEvent });
   } catch (error) {
-    console.error("Error creating event:", error);
+    logger.error(error, "Error creating event");
     res.status(500).json({ error: "Failed to create event" });
   }
 };
@@ -175,7 +176,7 @@ exports.updateEvent = async (req, res) => {
 
     res.json({ message: "Event updated successfully", event: updatedEvent });
   } catch (error) {
-    console.error("Error updating event:", error);
+    logger.error(error, "Error updating event");
     res.status(500).json({ error: "Failed to update event" });
   }
 };
@@ -199,7 +200,7 @@ exports.deleteEvent = async (req, res) => {
     await Event.findByIdAndDelete(req.params.id);
     res.json({ message: "Event deleted successfully" });
   } catch (error) {
-    console.error("Error deleting event:", error);
+    logger.error(error, "Error deleting event");
     res.status(500).json({ error: "Failed to delete event" });
   }
 };
