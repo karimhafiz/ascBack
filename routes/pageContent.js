@@ -9,27 +9,23 @@ const upload = createUpload("page-images");
 // Public — frontend fetches this to populate pages
 router.get("/:page", pageContentController.getPageContent);
 
-// Admin/mod only — update page content
+// Admin only — update page content directly.
+// Moderators submit change requests instead (see routes/pageContentRequests.js).
 // Uses upload.fields for multiple possible image uploads (hero + activity cards)
 router.put(
   "/:page",
   authMiddleware,
-  authorize("admin", "moderator"),
+  authorize("admin"),
   upload.any(),
   pageContentController.updatePageContent
 );
 
-// Admin/mod only — reset a full page or a specific section back to defaults
-router.delete(
-  "/:page",
-  authMiddleware,
-  authorize("admin", "moderator"),
-  pageContentController.resetPageContent
-);
+// Admin only — reset a full page or a specific section back to defaults
+router.delete("/:page", authMiddleware, authorize("admin"), pageContentController.resetPageContent);
 router.delete(
   "/:page/:section",
   authMiddleware,
-  authorize("admin", "moderator"),
+  authorize("admin"),
   pageContentController.resetPageContent
 );
 

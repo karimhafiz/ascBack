@@ -65,8 +65,11 @@ exports.updatePageContent = async (req, res) => {
           })
         );
 
-        updates.activityCards = updates.activityCards.map((card) => {
-          const newImage = card._id ? cardImages[card._id] : undefined;
+        updates.activityCards = updates.activityCards.map((card, index) => {
+          // Mirrors the frontend's field-naming fallback (card._id || index) so
+          // first-ever uploads on a card with no _id yet still get matched.
+          const cardKey = card._id ? String(card._id) : String(index);
+          const newImage = cardImages[cardKey];
           return { ...card, image: newImage ?? card.image };
         });
       }
