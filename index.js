@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const path = require("path");
 const helmet = require("helmet");
+const mongoSanitize = require("express-mongo-sanitize");
 const connectDB = require("./config/db"); // Import the database connection function
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -41,6 +42,7 @@ app.use("/events/subscriptions/webhook", express.raw({ type: "application/json" 
 
 app.use(express.json());
 app.use(cookieParser());
+app.use(mongoSanitize());
 
 // Serve static files from the "uploads" directory
 // app.use("/uploads", express.static(path.join(__dirname, "uploads")));
