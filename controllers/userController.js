@@ -14,7 +14,10 @@ const {
   clearRefreshTokenCookie,
   setRefreshTokenExpiration,
 } = require("../utils/tokenUtils");
+const { verifyEmailDomain } = require("../utils/emailUtils");
 const logger = require("../utils/logger");
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 exports.register = async (req, res) => {
   try {
@@ -23,11 +26,19 @@ exports.register = async (req, res) => {
     if (!name || !name.trim()) {
       return res.status(400).json({ error: "Name is required" });
     }
-    if (!email || !email.trim()) {
-      return res.status(400).json({ error: "Email is required" });
+    if (!email || typeof email !== "string" || !EMAIL_REGEX.test(email.trim())) {
+      return res.status(400).json({ error: "A valid email address is required" });
     }
     if (!password || password.length < 6) {
       return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+
+    const emailDomainValid = await verifyEmailDomain(email.trim().toLowerCase());
+    if (!emailDomainValid) {
+      return res.status(400).json({
+        error:
+          "This email domain does not appear to accept emails. Please use a valid email address.",
+      });
     }
 
     const existingUser = await User.findOne({ email });

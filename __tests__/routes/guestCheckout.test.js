@@ -33,6 +33,7 @@ const mockStripe = {
 jest.mock("stripe", () => jest.fn(() => mockStripe));
 
 jest.mock("../../utils/emailUtils", () => ({
+  ...jest.requireActual("../../utils/emailUtils"),
   sendTicketConfirmationEmail: jest.fn().mockResolvedValue(true),
 }));
 

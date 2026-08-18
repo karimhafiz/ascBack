@@ -19,6 +19,9 @@ jest.mock("stripe", () => {
   }));
 });
 jest.mock("bcryptjs");
+jest.mock("../../utils/emailUtils", () => ({
+  verifyEmailDomain: jest.fn().mockResolvedValue(true),
+}));
 jest.mock("../../utils/tokenUtils", () => ({
   generateAccessToken: jest.fn(() => "mock-access-token"),
   generateRefreshToken: jest.fn(() => "mock-refresh-token"),

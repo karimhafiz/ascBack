@@ -2,10 +2,16 @@ const mongoose = require("mongoose");
 const Team = require("../models/Team");
 const Event = require("../models/Event");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-const { sendTeamRegistrationEmail, sendTeamUpdateEmail } = require("../utils/emailUtils");
+const {
+  sendTeamRegistrationEmail,
+  sendTeamUpdateEmail,
+  verifyEmailDomain,
+} = require("../utils/emailUtils");
 const { generateUniqueCode } = require("../utils/ticketUtils");
 const { respondStripeOutage } = require("../utils/stripeErrorUtils");
 const logger = require("../utils/logger");
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Get a single team by ID
 exports.getTeam = async (req, res) => {
@@ -43,11 +49,23 @@ exports.registerTeam = async (req, res) => {
     if (!manager || !manager.name || !manager.name.trim()) {
       return res.status(400).json({ error: "Manager name is required" });
     }
-    if (!manager.email || !manager.email.trim()) {
-      return res.status(400).json({ error: "Manager email is required" });
+    if (
+      !manager.email ||
+      typeof manager.email !== "string" ||
+      !EMAIL_REGEX.test(manager.email.trim())
+    ) {
+      return res.status(400).json({ error: "A valid manager email address is required" });
     }
     if (!manager.phone || !manager.phone.trim()) {
       return res.status(400).json({ error: "Manager phone number is required" });
+    }
+
+    const emailDomainValid = await verifyEmailDomain(manager.email.trim().toLowerCase());
+    if (!emailDomainValid) {
+      return res.status(400).json({
+        error:
+          "This email domain does not appear to accept emails. Please use a valid email address.",
+      });
     }
 
     const event = await Event.findById(eventId);

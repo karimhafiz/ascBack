@@ -1,28 +1,12 @@
-const dns = require("dns");
 const mongoose = require("mongoose");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const Ticket = require("../models/Ticket");
 const Event = require("../models/Event");
 const EventSubscription = require("../models/EventSubscription");
 const User = require("../models/User");
-const { sendTicketConfirmationEmail } = require("../utils/emailUtils");
+const { sendTicketConfirmationEmail, verifyEmailDomain } = require("../utils/emailUtils");
 const { respondStripeOutage } = require("../utils/stripeErrorUtils");
 const logger = require("../utils/logger");
-
-/**
- * Verify an email domain has MX records (i.e. can actually receive mail).
- * Returns true if valid, false if the domain has no MX records.
- */
-const verifyEmailDomain = (email) => {
-  return new Promise((resolve) => {
-    const domain = email.split("@")[1];
-    if (!domain) return resolve(false);
-    dns.resolveMx(domain, (err, addresses) => {
-      if (err || !addresses || addresses.length === 0) return resolve(false);
-      resolve(true);
-    });
-  });
-};
 
 // Shared logic for both authenticated and guest checkout
 const buildCheckoutSession = async ({ email, eventId, rawQuantity, res }) => {
