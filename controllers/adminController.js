@@ -6,6 +6,7 @@ const Course = require("../models/Course");
 const Team = require("../models/Team");
 const Event = require("../models/Event");
 const VenueBooking = require("../models/VenueBooking");
+const logger = require("../utils/logger");
 
 // ── GET /admin/dashboard ──────────────────────────────────────────────────────
 // Admin only.
@@ -47,7 +48,7 @@ exports.getDashboard = async (req, res) => {
 
     res.json({ tickets, events, teams, enrollments, courses, users, venueBookings });
   } catch (err) {
-    console.error("Dashboard error:", err);
+    logger.error(err, "Dashboard error");
     res.status(500).json({ error: "Failed to load dashboard" });
   }
 };
@@ -72,7 +73,7 @@ exports.toggleBan = async (req, res) => {
       isBanned: user.isBanned,
     });
   } catch (err) {
-    console.error("Ban toggle error:", err);
+    logger.error(err, "Ban toggle error");
     res.status(500).json({ error: "Failed to update ban status" });
   }
 };
@@ -86,7 +87,7 @@ exports.getAllUsers = async (req, res) => {
     const users = await User.find().select("-password -refreshToken").sort({ createdAt: -1 });
     res.json(users);
   } catch (err) {
-    console.error("Error fetching users:", err);
+    logger.error(err, "Error fetching users");
     res.status(500).json({ error: "Failed to fetch users" });
   }
 };
@@ -106,7 +107,7 @@ exports.deleteUser = async (req, res) => {
     if (!user) return res.status(404).json({ error: "User not found" });
     res.json({ message: "User deleted successfully" });
   } catch (err) {
-    console.error("Error deleting user:", err);
+    logger.error(err, "Error deleting user");
     res.status(500).json({ error: "Failed to delete user" });
   }
 };
@@ -141,7 +142,7 @@ exports.updateUserRole = async (req, res) => {
     if (!user) return res.status(404).json({ error: "User not found" });
     res.json({ message: "Role updated", user });
   } catch (err) {
-    console.error("Role update error:", err);
+    logger.error(err, "Role update error");
     res.status(500).json({ error: "Failed to update role" });
   }
 };

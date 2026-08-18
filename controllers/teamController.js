@@ -4,6 +4,8 @@ const Event = require("../models/Event");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const { sendTeamRegistrationEmail, sendTeamUpdateEmail } = require("../utils/emailUtils");
 const { generateUniqueCode } = require("../utils/ticketUtils");
+const { respondStripeOutage } = require("../utils/stripeErrorUtils");
+const logger = require("../utils/logger");
 
 // Get a single team by ID
 exports.getTeam = async (req, res) => {
@@ -17,7 +19,7 @@ exports.getTeam = async (req, res) => {
     if (!team) return res.status(404).json({ error: "Team not found" });
     res.json({ team });
   } catch (error) {
-    console.error("Error fetching team:", error);
+    logger.error(error, "Error fetching team");
     res.status(500).json({ error: "Failed to fetch team" });
   }
 };
@@ -76,7 +78,7 @@ exports.registerTeam = async (req, res) => {
       await team.save();
 
       sendTeamRegistrationEmail({ team, event }).catch((err) =>
-        console.error("Team registration email error:", err)
+        logger.error(err, "Team registration email error")
       );
 
       return res.json({ message: "Team registered successfully", team });
@@ -109,7 +111,8 @@ exports.registerTeam = async (req, res) => {
 
     res.json({ url: session.url });
   } catch (error) {
-    console.error("Team registration error:", error);
+    if (respondStripeOutage(res, error, "teamController.registerTeam")) return;
+    logger.error(error, "Team registration error");
     res.status(500).json({ error: "Failed to register team" });
   }
 };
@@ -149,13 +152,13 @@ exports.handlePaymentSuccess = async (req, res) => {
     const event = await Event.findById(team.event);
     if (event) {
       sendTeamRegistrationEmail({ team, event }).catch((err) =>
-        console.error("Team registration email error:", err)
+        logger.error(err, "Team registration email error")
       );
     }
 
     res.redirect(`${process.env.FRONT_END_URL}team-confirmation?teamId=${teamId}`);
   } catch (error) {
-    console.error("Team payment success error:", error);
+    logger.error(error, "Team payment success error");
     res.redirect(`${process.env.FRONT_END_URL}events`);
   }
 };
@@ -178,7 +181,7 @@ exports.cancelTeamPayment = async (req, res) => {
     // If team is already paid (shouldn't happen), just redirect home
     res.redirect(`${process.env.FRONT_END_URL}events`);
   } catch (error) {
-    console.error("Team cancel error:", error);
+    logger.error(error, "Team cancel error");
     res.redirect(`${process.env.FRONT_END_URL}events`);
   }
 };
@@ -200,7 +203,7 @@ exports.getUnpaidTeamsForManager = async (req, res) => {
     });
     res.json({ teams });
   } catch (error) {
-    console.error("Error fetching unpaid teams:", error);
+    logger.error(error, "Error fetching unpaid teams");
     res.status(500).json({ error: "Failed to fetch unpaid teams" });
   }
 };
@@ -244,13 +247,13 @@ exports.updateTeam = async (req, res) => {
     const event = await Event.findById(team.event);
     if (event) {
       sendTeamUpdateEmail({ team, event }).catch((err) =>
-        console.error("Team update email error:", err)
+        logger.error(err, "Team update email error")
       );
     }
 
     res.json({ message: "Team updated successfully", team });
   } catch (error) {
-    console.error("Update team error:", error);
+    logger.error(error, "Update team error");
     res.status(500).json({ error: "Failed to update team" });
   }
 };
@@ -273,7 +276,7 @@ exports.getTeamsForEvent = async (req, res) => {
 
     res.json(formattedTeams);
   } catch (error) {
-    console.error("Error fetching teams:", error);
+    logger.error(error, "Error fetching teams");
     res.status(500).json({ error: "Failed to fetch teams" });
   }
 };

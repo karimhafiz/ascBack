@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
 const PageContentRequest = require("../models/PageContentRequest");
 const PageContent = require("../models/PageContent");
+const logger = require("../utils/logger");
 
 // POST /pageContentRequests/:page — moderator only
 // Stages proposed changes + any newly uploaded images; never touches the
@@ -73,7 +74,7 @@ exports.submitPageContentRequest = async (req, res) => {
 
     res.status(201).json({ message: "Change request submitted for approval", request });
   } catch (error) {
-    console.error("Error submitting page content request:", error);
+    logger.error(error, "Error submitting page content request");
     res.status(500).json({ error: "Failed to submit request" });
   }
 };
@@ -103,7 +104,7 @@ exports.listPageContentRequests = async (req, res) => {
 
     res.json(result);
   } catch (error) {
-    console.error("Error listing page content requests:", error);
+    logger.error(error, "Error listing page content requests");
     res.status(500).json({ error: "Failed to fetch requests" });
   }
 };
@@ -154,7 +155,7 @@ exports.approvePageContentRequest = async (req, res) => {
     );
     deletions.forEach((result) => {
       if (result.status === "rejected") {
-        console.error("Failed to delete replaced page-content image:", result.reason);
+        logger.error(result.reason, "Failed to delete replaced page-content image");
       }
     });
 
@@ -165,7 +166,7 @@ exports.approvePageContentRequest = async (req, res) => {
 
     res.json({ message: "Request approved", request, pageContent: updated });
   } catch (error) {
-    console.error("Error approving page content request:", error);
+    logger.error(error, "Error approving page content request");
     res.status(500).json({ error: "Failed to approve request" });
   }
 };
@@ -190,7 +191,7 @@ exports.declinePageContentRequest = async (req, res) => {
     );
     deletions.forEach((result) => {
       if (result.status === "rejected") {
-        console.error("Failed to delete staged page-content image:", result.reason);
+        logger.error(result.reason, "Failed to delete staged page-content image");
       }
     });
 
@@ -202,7 +203,7 @@ exports.declinePageContentRequest = async (req, res) => {
 
     res.json({ message: "Request declined", request });
   } catch (error) {
-    console.error("Error declining page content request:", error);
+    logger.error(error, "Error declining page content request");
     res.status(500).json({ error: "Failed to decline request" });
   }
 };

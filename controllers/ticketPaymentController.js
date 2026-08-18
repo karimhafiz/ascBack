@@ -6,6 +6,8 @@ const Event = require("../models/Event");
 const EventSubscription = require("../models/EventSubscription");
 const User = require("../models/User");
 const { sendTicketConfirmationEmail } = require("../utils/emailUtils");
+const { respondStripeOutage } = require("../utils/stripeErrorUtils");
+const logger = require("../utils/logger");
 
 /**
  * Verify an email domain has MX records (i.e. can actually receive mail).
@@ -124,7 +126,8 @@ const buildCheckoutSession = async ({ email, eventId, rawQuantity, res }) => {
 
     res.json({ url: session.url });
   } catch (err) {
-    console.error("Stripe session creation error:", err);
+    if (respondStripeOutage(res, err, "ticketPaymentController.buildCheckoutSession")) return;
+    logger.error(err, "Stripe session creation error");
     res.status(500).json({ error: "Failed to create checkout session" });
   }
 };
@@ -151,12 +154,10 @@ exports.createGuestCheckoutSession = async (req, res) => {
   // Verify the email domain can actually receive mail
   const emailDomainValid = await verifyEmailDomain(email.trim().toLowerCase());
   if (!emailDomainValid) {
-    return res
-      .status(400)
-      .json({
-        error:
-          "This email domain does not appear to accept emails. Please use a valid email address.",
-      });
+    return res.status(400).json({
+      error:
+        "This email domain does not appear to accept emails. Please use a valid email address.",
+    });
   }
 
   // Guests cannot create subscriptions — they require an authenticated account
@@ -174,9 +175,13 @@ exports.createGuestCheckoutSession = async (req, res) => {
 
 // GET /payments/success — Stripe redirect after payment
 exports.handleSuccess = async (req, res) => {
-  const { session_id } = req.query;
+  const { session_id, eventId: eventIdParam } = req.query;
 
   if (!session_id) {
+    logger.warn(
+      { eventId: eventIdParam, ip: req.ip },
+      "payment success redirect missing session_id"
+    );
     return res.status(400).json({ error: "Missing session_id" });
   }
 
@@ -185,13 +190,14 @@ exports.handleSuccess = async (req, res) => {
 
     // Subscription checkouts are handled by eventSubscriptionController
     if (session.mode === "subscription") {
-      const eventId = session.metadata?.eventId;
+      const subscriptionEventId = session.metadata?.eventId;
       return res.redirect(
-        `${process.env.BACK_END_URL}events/${eventId}/subscription-success?session_id=${session_id}`
+        `${process.env.BACK_END_URL}events/${subscriptionEventId}/subscription-success?session_id=${session_id}`
       );
     }
 
     if (session.payment_status !== "paid") {
+      logger.warn({ eventId: eventIdParam }, "Payment could not be completed");
       return res.status(400).json({ error: "Payment not completed" });
     }
 
@@ -206,6 +212,7 @@ exports.handleSuccess = async (req, res) => {
     const { email, quantity, eventId } = session.metadata;
     const qty = parseInt(quantity, 10);
     if (!Number.isInteger(qty) || qty < 1) {
+      logger.warn({ quantity }, "Session metadata stored invalid quantity");
       return res.status(400).json({ error: "Invalid quantity in session metadata" });
     }
     const amountPaid = session.amount_total / 100;
@@ -213,11 +220,14 @@ exports.handleSuccess = async (req, res) => {
     // Verify the email domain can receive mail — if not, refund immediately
     const emailDomainValid = await verifyEmailDomain(email);
     if (!emailDomainValid) {
-      console.warn(`Invalid email domain for ${email}, issuing refund for session ${session.id}`);
+      logger.warn(
+        { email },
+        `Invalid email domain for ${email}, issuing refund for session ${session.id}`
+      );
       try {
         await stripe.refunds.create({ payment_intent: session.payment_intent });
       } catch (refundErr) {
-        console.error("Refund failed for invalid email domain:", refundErr);
+        logger.error(refundErr, "Refund failed for invalid email domain");
       }
       return res.redirect(`${process.env.FRONT_END_URL}events/${eventId}?error=invalid_email`);
     }
@@ -231,6 +241,7 @@ exports.handleSuccess = async (req, res) => {
     try {
       await mongoSession.withTransaction(async () => {
         ticketIds = [];
+        const perTicketAmount = amountPaid / qty;
         for (let i = 0; i < qty; i++) {
           const ticket = new Ticket({
             eventId,
@@ -238,6 +249,7 @@ exports.handleSuccess = async (req, res) => {
             paymentId: session.id,
             status: "paid",
             user: user?._id ?? null,
+            totalAmountPaid: perTicketAmount,
           });
           await ticket.save({ session: mongoSession });
           ticketIds.push(ticket._id);
@@ -255,11 +267,11 @@ exports.handleSuccess = async (req, res) => {
     } catch (txErr) {
       // Transaction rolled back — payment went through but we couldn't
       // fulfil the order. Issue an automatic refund.
-      console.error("Ticket transaction failed, issuing refund:", txErr);
+      logger.error(txErr, "Ticket transaction failed with this error, will issue refund");
       try {
         await stripe.refunds.create({ payment_intent: session.payment_intent });
       } catch (refundErr) {
-        console.error("Automatic refund failed:", refundErr);
+        logger.error(refundErr, "Automatic refund failed");
       }
       return res.redirect(
         `${process.env.FRONT_END_URL}events/${eventId}?error=tickets_unavailable`
@@ -272,14 +284,14 @@ exports.handleSuccess = async (req, res) => {
     const event = await Event.findById(eventId);
     const createdTickets = await Ticket.find({ paymentId: session.id });
     sendTicketConfirmationEmail({ buyerEmail: email, tickets: createdTickets, event }).catch(
-      (err) => console.error("Failed to send ticket confirmation email:", err)
+      (err) => logger.error(err, "Failed to send ticket confirmation email:")
     );
 
     res.redirect(
       `${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}&ticket_id=${ticketIds[0]}`
     );
   } catch (err) {
-    console.error("Stripe success handler error:", err);
+    logger.error(err, "Payment for ticket failed");
     res.status(500).json({ error: "Failed to process payment confirmation" });
   }
 };
@@ -309,7 +321,7 @@ exports.getGuestOrder = async (req, res) => {
       quantity: parseInt(session.metadata.quantity, 10),
     });
   } catch (err) {
-    console.error("Error fetching guest order:", err);
+    logger.error(err, "Error fetching guest order");
     res.status(500).json({ error: "Failed to fetch order details" });
   }
 };
@@ -321,6 +333,10 @@ exports.getSession = async (req, res) => {
 
     // Enforce ownership — only the buyer or an admin can view a session
     if (session.customer_email !== req.user.email && req.user.role !== "admin") {
+      logger.warn(
+        { userId: req.user.id, sessionId: req.params.sessionId },
+        "Unauthorised attempt to view payment session"
+      );
       return res.status(403).json({ error: "Not authorised to view this session" });
     }
 
@@ -333,7 +349,7 @@ exports.getSession = async (req, res) => {
       quantity: session.metadata.quantity,
     });
   } catch (err) {
-    console.error("Error retrieving session:", err);
+    logger.error(err, "Error retrieving session");
     res.status(500).json({ error: "Failed to retrieve session" });
   }
 };

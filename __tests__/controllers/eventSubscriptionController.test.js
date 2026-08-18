@@ -439,7 +439,7 @@ describe("handleWebhook", () => {
       id: "evt_1",
       type: "invoice.payment_succeeded",
       created: 1000,
-      data: { object: { subscription: "sub_123" } },
+      data: { object: { subscription: "sub_123", amount_paid: 5000 } },
     });
     WebhookEvent.findOne.mockResolvedValue(null);
     mockStripe.subscriptions.retrieve.mockResolvedValue({
@@ -453,7 +453,10 @@ describe("handleWebhook", () => {
 
     expect(EventSubscription.findOneAndUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ subscriptionId: "sub_123" }),
-      expect.objectContaining({ subscriptionStatus: "active", status: "active" })
+      expect.objectContaining({
+        $set: expect.objectContaining({ subscriptionStatus: "active", status: "active" }),
+        $inc: { totalAmountPaid: 50 },
+      })
     );
     expect(res.json).toHaveBeenCalledWith({ received: true });
   });

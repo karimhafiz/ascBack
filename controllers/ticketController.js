@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Ticket = require("../models/Ticket");
 const Event = require("../models/Event");
 const { isStaff, isTicketOwner } = require("../utils/authUtils");
+const logger = require("../utils/logger");
 
 // POST /tickets — admin/moderator direct purchase (bypasses Stripe)
 exports.buyTicket = async (req, res) => {
@@ -43,7 +44,7 @@ exports.buyTicket = async (req, res) => {
 
     res.status(201).json(ticket);
   } catch (error) {
-    console.error("Error buying ticket:", error);
+    logger.error(error, "Error buying ticket");
     res.status(500).json({ error: "Failed to create ticket" });
   }
 };
@@ -92,7 +93,7 @@ exports.getAllTickets = async (req, res) => {
     ]);
     res.json(results);
   } catch (error) {
-    console.error("Error fetching tickets:", error);
+    logger.error(error, "Error fetching tickets");
     res.status(500).json({ error: "Failed to fetch tickets" });
   }
 };
@@ -115,7 +116,7 @@ exports.getTicketsByPayment = async (req, res) => {
 
     res.json(tickets);
   } catch (err) {
-    console.error("Error fetching tickets by payment:", err);
+    logger.error(err, "Error fetching tickets by payment");
     res.status(500).json({ error: "Failed to fetch tickets" });
   }
 };
@@ -130,7 +131,7 @@ exports.verifyTicket = async (req, res) => {
     if (!ticket) return res.status(404).json({ error: "Ticket not found" });
     res.json(ticket);
   } catch (err) {
-    console.error("Error verifying ticket:", err);
+    logger.error(err, "Error verifying ticket");
     res.status(500).json({ error: "Failed to verify ticket" });
   }
 };
@@ -159,7 +160,7 @@ exports.checkInTicket = async (req, res) => {
 
     res.json(response);
   } catch (err) {
-    console.error("Error checking in ticket:", err);
+    logger.error(err, "Error checking in ticket");
     res.status(500).json({ error: "Failed to check in ticket" });
   }
 };
@@ -190,7 +191,7 @@ exports.getTicketById = async (req, res) => {
 
     res.json(ticket);
   } catch (err) {
-    console.error("Error fetching ticket:", err);
+    logger.error(err, "Error fetching ticket");
     res.status(500).json({ error: "Failed to fetch ticket" });
   }
 };

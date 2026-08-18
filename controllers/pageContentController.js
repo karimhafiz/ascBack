@@ -1,5 +1,6 @@
 const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
 const PageContent = require("../models/PageContent");
+const logger = require("../utils/logger");
 
 // GET /content/:page — public, used by frontend to load page content
 exports.getPageContent = async (req, res) => {
@@ -11,7 +12,7 @@ exports.getPageContent = async (req, res) => {
     }
     res.json(content);
   } catch (error) {
-    console.error("Error fetching page content:", error);
+    logger.error(error, "Error fetching page content");
     res.status(500).json({ error: "Failed to fetch page content" });
   }
 };
@@ -83,7 +84,7 @@ exports.updatePageContent = async (req, res) => {
 
     res.json({ message: "Page content updated", pageContent: content });
   } catch (error) {
-    console.error("Error updating page content:", error);
+    logger.error(error, "Error updating page content");
     res.status(500).json({ error: "Failed to update page content" });
   }
 };
@@ -142,7 +143,7 @@ exports.resetPageContent = async (req, res) => {
 
     res.status(400).json({ error: "Unknown page" });
   } catch (error) {
-    console.error("Error resetting page content:", error);
+    logger.error(error, "Error resetting page content");
     res.status(500).json({ error: "Failed to reset page content" });
   }
 };

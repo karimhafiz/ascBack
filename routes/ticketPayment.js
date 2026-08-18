@@ -2,7 +2,7 @@ const express = require("express");
 const rateLimit = require("express-rate-limit");
 const router = express.Router();
 const ticketPaymentController = require("../controllers/ticketPaymentController");
-const authenticateToken = require("../middleware/authMiddleware");
+const authMiddleware = require("../middleware/authMiddleware");
 
 const guestCheckoutLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -12,7 +12,7 @@ const guestCheckoutLimiter = rateLimit({
 
 router.post(
   "/create-checkout-session",
-  authenticateToken,
+  authMiddleware,
   ticketPaymentController.createCheckoutSession
 );
 router.post(
@@ -20,8 +20,8 @@ router.post(
   guestCheckoutLimiter,
   ticketPaymentController.createGuestCheckoutSession
 );
-router.get("/success", ticketPaymentController.handleSuccess);
-router.get("/guest-order/:sessionId", ticketPaymentController.getGuestOrder);
-router.get("/session/:sessionId", authenticateToken, ticketPaymentController.getSession);
+router.get("/success", guestCheckoutLimiter, ticketPaymentController.handleSuccess);
+router.get("/guest-order/:sessionId", guestCheckoutLimiter, ticketPaymentController.getGuestOrder);
+router.get("/session/:sessionId", authMiddleware, ticketPaymentController.getSession);
 
 module.exports = router;
