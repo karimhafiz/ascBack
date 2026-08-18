@@ -284,6 +284,32 @@ function venueBookingCancellation({ userName, venue, slot, refunded }) {
   return wrap("#ff6b6b", "Booking Cancelled", body);
 }
 
+// ==================== VERIFICATION LINKS ====================
+
+function button(link, label) {
+  return `<div style="text-align:center;margin-bottom:24px;">
+    <a href="${link}" style="display:inline-block;background-color:#08b3f7;color:#ffffff;text-decoration:none;font-weight:bold;font-size:16px;padding:12px 28px;border-radius:8px;">${label}</a>
+  </div>`;
+}
+
+function accountVerification({ link }) {
+  const body = `
+    <p style="margin:0 0 16px;font-size:16px;">Thanks for registering with ASC! Confirm your email address to finish setting up your account.</p>
+    ${button(link, "Verify My Email")}
+    ${infoBox("This link expires in 20 minutes. If you didn't create an account, you can ignore this email.")}`;
+
+  return wrap("#08b3f7", "Verify Your Email", body);
+}
+
+function ticketResendLink({ link }) {
+  const body = `
+    <p style="margin:0 0 16px;font-size:16px;">You (or someone with this email address) asked to recover a ticket. Click below to view it.</p>
+    ${button(link, "View My Ticket")}
+    ${infoBox("This link expires in 20 minutes and can only be used once. If you didn't request this, you can ignore this email.")}`;
+
+  return wrap("#08b3f7", "Recover Your Ticket", body);
+}
+
 module.exports = {
   ticketConfirmation,
   courseEnrollment,
@@ -294,4 +320,6 @@ module.exports = {
   eventSubscriptionCancellation,
   venueBookingConfirmation,
   venueBookingCancellation,
+  accountVerification,
+  ticketResendLink,
 };

@@ -181,8 +181,36 @@ async function sendVenueBookingCancellationEmail({ buyerEmail, userName, venue, 
   });
 }
 
+/**
+ * Send an account-verification link email.
+ */
+async function sendAccountVerificationEmail({ email, link }) {
+  const transporter = await createTransporter();
+  await transporter.sendMail({
+    from: from(),
+    to: email,
+    subject: "Verify your email address",
+    html: templates.accountVerification({ link }),
+  });
+}
+
+/**
+ * Send a ticket-recovery link email (guest checkout resend).
+ */
+async function sendTicketResendLinkEmail({ email, link }) {
+  const transporter = await createTransporter();
+  await transporter.sendMail({
+    from: from(),
+    to: email,
+    subject: "Recover your ticket",
+    html: templates.ticketResendLink({ link }),
+  });
+}
+
 module.exports = {
   verifyEmailDomain,
+  sendAccountVerificationEmail,
+  sendTicketResendLinkEmail,
   sendTicketConfirmationEmail,
   sendCourseEnrollmentEmail,
   sendSubscriptionCancellationEmail,
