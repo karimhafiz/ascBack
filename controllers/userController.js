@@ -107,7 +107,7 @@ exports.requestEmailVerification = async (req, res) => {
         .catch((err) => logger.error(err, "Failed to send account verification email"));
     } else {
       logger.info(
-        { email: normalisedEmail, userFound: !!user, alreadyVerified: user?.isVerified },
+        { email: normalisedEmail, userFound: Boolean(user), alreadyVerified: user?.isVerified },
         "Verification link request skipped"
       );
     }
