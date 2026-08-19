@@ -25,5 +25,7 @@ router.post(
 router.get("/success", guestCheckoutLimiter, ticketPaymentController.handleSuccess);
 router.get("/guest-order/:sessionId", guestCheckoutLimiter, ticketPaymentController.getGuestOrder);
 router.get("/session/:sessionId", authMiddleware, ticketPaymentController.getSession);
+router.post("/resend/request", guestCheckoutLimiter, ticketPaymentController.requestTicketResend);
+router.post("/resend/confirm", guestCheckoutLimiter, ticketPaymentController.confirmTicketResend);
 
 module.exports = router;

@@ -45,6 +45,12 @@ jest.mock("stripe", () => jest.fn(() => mockStripe));
 jest.mock("../../utils/emailUtils", () => ({
   ...jest.requireActual("../../utils/emailUtils"),
   sendTicketConfirmationEmail: jest.fn().mockResolvedValue(true),
+  sendTicketResendLinkEmail: jest.fn().mockResolvedValue(true),
+}));
+
+jest.mock("../../utils/verificationTokenUtils", () => ({
+  issueVerificationToken: jest.fn().mockResolvedValue("mock-resend-token"),
+  consumeVerificationToken: jest.fn(),
 }));
 
 const Ticket = require("../../models/Ticket");
@@ -52,6 +58,14 @@ const Event = require("../../models/Event");
 const EventSubscription = require("../../models/EventSubscription");
 const User = require("../../models/User");
 const paymentRoutes = require("../../routes/ticketPayment");
+const {
+  issueVerificationToken,
+  consumeVerificationToken,
+} = require("../../utils/verificationTokenUtils");
+const {
+  sendTicketResendLinkEmail,
+  sendTicketConfirmationEmail,
+} = require("../../utils/emailUtils");
 
 // Reusable valid ObjectIds
 const validEventId = new mongoose.Types.ObjectId().toString();
@@ -588,6 +602,107 @@ describe("Payment Routes — Integration", () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Failed to fetch order details");
+    });
+  });
+
+  // ─── POST /resend/request — ticket recovery request ────────────────────────
+
+  describe("POST /api/payments/resend/request", () => {
+    it("sends a link and returns a generic message when tickets exist", async () => {
+      Ticket.exists.mockResolvedValue(true);
+
+      const res = await request(app)
+        .post("/api/payments/resend/request")
+        .send({ email: "guest@test.com" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.message).toBe("If that email has a ticket, we've sent a link to it.");
+      expect(issueVerificationToken).toHaveBeenCalledWith({
+        email: "guest@test.com",
+        purpose: "ticket_resend",
+      });
+      expect(sendTicketResendLinkEmail).toHaveBeenCalled();
+    });
+
+    it("returns the same generic message without sending a link when no tickets exist", async () => {
+      Ticket.exists.mockResolvedValue(false);
+
+      const res = await request(app)
+        .post("/api/payments/resend/request")
+        .send({ email: "nobody@test.com" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.message).toBe("If that email has a ticket, we've sent a link to it.");
+      expect(issueVerificationToken).not.toHaveBeenCalled();
+      expect(sendTicketResendLinkEmail).not.toHaveBeenCalled();
+    });
+
+    it("returns 400 for an invalid email", async () => {
+      const res = await request(app)
+        .post("/api/payments/resend/request")
+        .send({ email: "not-an-email" });
+
+      expect(res.status).toBe(400);
+      expect(Ticket.exists).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── POST /resend/confirm — ticket recovery confirmation ───────────────────
+
+  describe("POST /api/payments/resend/confirm", () => {
+    it("returns 400 for an expired or invalid token", async () => {
+      consumeVerificationToken.mockResolvedValue(null);
+
+      const res = await request(app)
+        .post("/api/payments/resend/confirm")
+        .send({ token: "bad-token" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("This link has expired or is invalid.");
+    });
+
+    it("returns 404 if the token is valid but no paid tickets are found", async () => {
+      consumeVerificationToken.mockResolvedValue("guest@test.com");
+      Ticket.find.mockReturnValue({ populate: jest.fn().mockResolvedValue([]) });
+
+      const res = await request(app)
+        .post("/api/payments/resend/confirm")
+        .send({ token: "valid-token" });
+
+      expect(res.status).toBe(404);
+    });
+
+    it("serves the tickets and resends one confirmation email per distinct event", async () => {
+      consumeVerificationToken.mockResolvedValue("guest@test.com");
+      const eventA = { _id: "eventA" };
+      const eventB = { _id: "eventB" };
+      Ticket.find.mockReturnValue({
+        populate: jest.fn().mockResolvedValue([
+          { _id: "t1", eventId: eventA },
+          { _id: "t2", eventId: eventA },
+          { _id: "t3", eventId: eventB },
+        ]),
+      });
+
+      const res = await request(app)
+        .post("/api/payments/resend/confirm")
+        .send({ token: "valid-token" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.tickets).toHaveLength(3);
+      expect(res.body.email).toBe("guest@test.com");
+
+      // Regression: tickets spanning multiple events must be grouped so each
+      // resend email only ever describes tickets for a single event.
+      expect(sendTicketConfirmationEmail).toHaveBeenCalledTimes(2);
+      const eventACall = sendTicketConfirmationEmail.mock.calls.find(
+        ([arg]) => arg.event === eventA
+      );
+      const eventBCall = sendTicketConfirmationEmail.mock.calls.find(
+        ([arg]) => arg.event === eventB
+      );
+      expect(eventACall[0].tickets).toHaveLength(2);
+      expect(eventBCall[0].tickets).toHaveLength(1);
     });
   });
 });
