@@ -19,5 +19,7 @@ router.post("/register", authLimiter, userController.register);
 router.post("/refresh", authLimiter, userController.refresh);
 router.post("/logout", userController.logout);
 router.get("/profile", authMiddleware, userController.getProfile);
+router.post("/verify-email/request", authLimiter, userController.requestEmailVerification);
+router.post("/verify-email/confirm", userController.confirmEmailVerification);
 
 module.exports = router;

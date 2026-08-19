@@ -19,6 +19,7 @@ const userSchema = new mongoose.Schema(
     },
     isActive: { type: Boolean, default: true },
     isBanned: { type: Boolean, default: false },
+    isVerified: { type: Boolean, default: false },
     refreshToken: { type: String, default: null },
     refreshTokenExpiresAt: { type: Date, default: null },
   },

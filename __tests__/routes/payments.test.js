@@ -16,7 +16,7 @@ jest.mock("../../models/User");
 
 // Mock auth middleware — pass through for tests
 jest.mock("../../middleware/authMiddleware", () => (req, res, next) => {
-  req.user = { id: "testUser123", role: "user", email: "buyer@test.com" };
+  req.user = { id: "testUser123", role: "user", email: "buyer@test.com", isVerified: true };
   next();
 });
 

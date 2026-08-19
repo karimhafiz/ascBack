@@ -35,12 +35,20 @@ exports.googleLogin = async (req, res) => {
     // find or create the user
     let user = await User.findOne({ email });
     if (!user) {
-      user = new User({ name: name || email, email, googleId, authProvider: "google" });
+      user = new User({
+        name: name || email,
+        email,
+        googleId,
+        authProvider: "google",
+        isVerified: true, // Google already verified this email for us
+      });
       await user.save();
     } else if (!user.googleId) {
-      // existing user linking Google — store googleId
+      // existing user linking Google — store googleId, and treat this as
+      // proof of email ownership even if they hadn't verified it yet
       user.googleId = googleId;
       user.authProvider = user.password ? "both" : "google";
+      user.isVerified = true;
       await user.save();
     }
 
@@ -62,7 +70,14 @@ exports.googleLogin = async (req, res) => {
 
     res.json({
       accessToken,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role, picture },
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isVerified: user.isVerified,
+        picture,
+      },
     });
   } catch (err) {
     logger.error(err, "Google login error");

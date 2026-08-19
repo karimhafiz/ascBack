@@ -3,6 +3,7 @@ const router = express.Router();
 const courseController = require("../controllers/courseController");
 const authMiddleware = require("../middleware/authMiddleware");
 const authorize = require("../middleware/authorize");
+const requireVerified = require("../middleware/requireVerified");
 const { createUpload } = require("../config/multer");
 const upload = createUpload("course-images");
 
@@ -24,7 +25,7 @@ router.get(
 );
 
 // authenticated — enroll
-router.post("/:courseId/enroll", authMiddleware, courseController.enrollInCourse);
+router.post("/:courseId/enroll", authMiddleware, requireVerified, courseController.enrollInCourse);
 
 // authenticated — get my enrollment for a course
 router.get("/:courseId/my-enrollment", authMiddleware, courseController.getMyEnrollment);
