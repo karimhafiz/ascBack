@@ -7,6 +7,7 @@ jest.mock("../../models/Event");
 jest.mock("../../utils/emailUtils", () => ({
   sendTeamRegistrationEmail: jest.fn().mockResolvedValue(true),
   sendTeamUpdateEmail: jest.fn().mockResolvedValue(true),
+  verifyEmailDomain: jest.fn().mockResolvedValue(true),
 }));
 
 const mockStripe = {
@@ -150,7 +151,7 @@ describe("Team Controller", () => {
         .send({ name: "Team A", manager: { name: "M", phone: "07123456789" } });
 
       expect(res.status).toBe(400);
-      expect(res.body.error).toBe("Manager email is required");
+      expect(res.body.error).toBe("A valid manager email address is required");
     });
 
     it("should return 400 if event is not a tournament", async () => {

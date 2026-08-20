@@ -1,8 +1,24 @@
+const dns = require("dns");
 const QRCode = require("qrcode");
 const { createTransporter } = require("../config/emailConfig");
 const templates = require("./emailTemplates");
 
 const from = () => `"ASC Events" <${process.env.EMAIL_USER}>`;
+
+/**
+ * Verify an email domain has MX records (i.e. can actually receive mail).
+ * Returns true if valid, false if the domain has no MX records.
+ */
+function verifyEmailDomain(email) {
+  return new Promise((resolve) => {
+    const domain = email.split("@")[1];
+    if (!domain) return resolve(false);
+    dns.resolveMx(domain, (err, addresses) => {
+      if (err || !addresses || addresses.length === 0) return resolve(false);
+      resolve(true);
+    });
+  });
+}
 
 function formatAccessUntil(currentPeriodEnd) {
   return currentPeriodEnd
@@ -165,7 +181,36 @@ async function sendVenueBookingCancellationEmail({ buyerEmail, userName, venue, 
   });
 }
 
+/**
+ * Send an account-verification link email.
+ */
+async function sendAccountVerificationEmail({ email, link }) {
+  const transporter = await createTransporter();
+  await transporter.sendMail({
+    from: from(),
+    to: email,
+    subject: "Verify your email address",
+    html: templates.accountVerification({ link }),
+  });
+}
+
+/**
+ * Send a ticket-recovery link email (guest checkout resend).
+ */
+async function sendTicketResendLinkEmail({ email, link }) {
+  const transporter = await createTransporter();
+  await transporter.sendMail({
+    from: from(),
+    to: email,
+    subject: "Recover your ticket",
+    html: templates.ticketResendLink({ link }),
+  });
+}
+
 module.exports = {
+  verifyEmailDomain,
+  sendAccountVerificationEmail,
+  sendTicketResendLinkEmail,
   sendTicketConfirmationEmail,
   sendCourseEnrollmentEmail,
   sendSubscriptionCancellationEmail,

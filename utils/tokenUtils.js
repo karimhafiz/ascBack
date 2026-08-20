@@ -5,7 +5,13 @@ const ACCESS_TOKEN_EXPIRY = "15m";
 
 function generateAccessToken(user) {
   return jwt.sign(
-    { id: user._id, role: user.role, name: user.name, email: user.email },
+    {
+      id: user._id,
+      role: user.role,
+      name: user.name,
+      email: user.email,
+      isVerified: user.isVerified,
+    },
     process.env.JWT_SECRET,
     { expiresIn: ACCESS_TOKEN_EXPIRY }
   );

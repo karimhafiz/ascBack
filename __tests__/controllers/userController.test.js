@@ -19,6 +19,14 @@ jest.mock("stripe", () => {
   }));
 });
 jest.mock("bcryptjs");
+jest.mock("../../utils/emailUtils", () => ({
+  verifyEmailDomain: jest.fn().mockResolvedValue(true),
+  sendAccountVerificationEmail: jest.fn().mockResolvedValue(true),
+}));
+jest.mock("../../utils/verificationTokenUtils", () => ({
+  issueVerificationToken: jest.fn().mockResolvedValue("mock-verification-token"),
+  consumeVerificationToken: jest.fn().mockResolvedValue(null),
+}));
 jest.mock("../../utils/tokenUtils", () => ({
   generateAccessToken: jest.fn(() => "mock-access-token"),
   generateRefreshToken: jest.fn(() => "mock-refresh-token"),
@@ -34,6 +42,10 @@ const Team = require("../../models/Team");
 const CourseEnrollment = require("../../models/CourseEnrollment");
 const EventSubscription = require("../../models/EventSubscription");
 const VenueBooking = require("../../models/VenueBooking");
+const {
+  issueVerificationToken,
+  consumeVerificationToken,
+} = require("../../utils/verificationTokenUtils");
 
 describe("User Controller", () => {
   let app;
@@ -56,6 +68,8 @@ describe("User Controller", () => {
     app.post("/api/users/login", userController.login);
     app.post("/api/users/refresh", userController.refresh);
     app.post("/api/users/logout", userController.logout);
+    app.post("/api/users/verify-email/request", userController.requestEmailVerification);
+    app.post("/api/users/verify-email/confirm", userController.confirmEmailVerification);
 
     // Profile needs auth
     app.get(
@@ -82,7 +96,9 @@ describe("User Controller", () => {
         .send({ name: "Test", email: "test@example.com", password: "password123" });
 
       expect(response.status).toBe(201);
-      expect(response.body.message).toBe("User registered successfully");
+      expect(response.body.message).toBe(
+        "User registered successfully. Please check your email to verify your account."
+      );
       expect(bcrypt.hash).toHaveBeenCalledWith("password123", 10);
     });
 
@@ -117,6 +133,83 @@ describe("User Controller", () => {
       expect(response.status).toBe(201);
       expect(mockGoogleUser.authProvider).toBe("both");
       expect(mockGoogleUser.save).toHaveBeenCalled();
+    });
+  });
+
+  describe("POST /verify-email/request", () => {
+    it("should return a generic message and send a link for an unverified user", async () => {
+      User.findOne.mockResolvedValue({ email: "test@example.com", isVerified: false });
+
+      const response = await request(app)
+        .post("/api/users/verify-email/request")
+        .send({ email: "test@example.com" });
+
+      expect(response.status).toBe(200);
+      expect(response.body.message).toBe("If that email needs verifying, we've sent a link to it.");
+      expect(issueVerificationToken).toHaveBeenCalledWith({
+        email: "test@example.com",
+        purpose: "account_verification",
+      });
+    });
+
+    it("should return the same generic message without sending a link for an unknown email", async () => {
+      User.findOne.mockResolvedValue(null);
+
+      const response = await request(app)
+        .post("/api/users/verify-email/request")
+        .send({ email: "nobody@example.com" });
+
+      expect(response.status).toBe(200);
+      expect(response.body.message).toBe("If that email needs verifying, we've sent a link to it.");
+      expect(issueVerificationToken).not.toHaveBeenCalled();
+    });
+
+    it("should not send a link for an already-verified user", async () => {
+      User.findOne.mockResolvedValue({ email: "test@example.com", isVerified: true });
+
+      const response = await request(app)
+        .post("/api/users/verify-email/request")
+        .send({ email: "test@example.com" });
+
+      expect(response.status).toBe(200);
+      expect(issueVerificationToken).not.toHaveBeenCalled();
+    });
+
+    it("should return 400 for an invalid email", async () => {
+      const response = await request(app)
+        .post("/api/users/verify-email/request")
+        .send({ email: "not-an-email" });
+
+      expect(response.status).toBe(400);
+      expect(issueVerificationToken).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("POST /verify-email/confirm", () => {
+    it("should mark the user verified for a valid token", async () => {
+      consumeVerificationToken.mockResolvedValue("test@example.com");
+      User.findOneAndUpdate.mockResolvedValue({ email: "test@example.com" });
+
+      const response = await request(app)
+        .post("/api/users/verify-email/confirm")
+        .send({ token: "valid-token" });
+
+      expect(response.status).toBe(200);
+      expect(User.findOneAndUpdate).toHaveBeenCalledWith(
+        { email: "test@example.com" },
+        { isVerified: true }
+      );
+    });
+
+    it("should return 400 for an expired or invalid token", async () => {
+      consumeVerificationToken.mockResolvedValue(null);
+
+      const response = await request(app)
+        .post("/api/users/verify-email/confirm")
+        .send({ token: "bad-token" });
+
+      expect(response.status).toBe(400);
+      expect(User.findOneAndUpdate).not.toHaveBeenCalled();
     });
   });
 

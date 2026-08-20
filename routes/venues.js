@@ -3,6 +3,7 @@ const router = express.Router();
 const venueController = require("../controllers/venueController");
 const authMiddleware = require("../middleware/authMiddleware");
 const authorize = require("../middleware/authorize");
+const requireVerified = require("../middleware/requireVerified");
 const { createUpload } = require("../config/multer");
 const upload = createUpload("venue-images");
 
@@ -13,7 +14,12 @@ router.get("/admin/bookings", authMiddleware, authorize("admin"), venueControlle
 // ==================== AUTHENTICATED USER (booking operations) ====================
 // Specific routes before /:venueId to avoid param collision
 
-router.post("/booking/checkout", authMiddleware, venueController.createVenueBookingCheckout);
+router.post(
+  "/booking/checkout",
+  authMiddleware,
+  requireVerified,
+  venueController.createVenueBookingCheckout
+);
 router.get("/booking/success", venueController.confirmVenueBooking);
 router.get("/my-bookings", authMiddleware, venueController.getUserBookings);
 router.get("/booking/:bookingId", authMiddleware, venueController.getBookingDetails);

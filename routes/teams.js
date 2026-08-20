@@ -2,12 +2,18 @@ const express = require("express");
 const router = express.Router();
 const teamController = require("../controllers/teamController");
 const authMiddleware = require("../middleware/authMiddleware");
+const requireVerified = require("../middleware/requireVerified");
 
 // Get a single team by ID
 router.get("/:teamId", teamController.getTeam);
 
 // Register a team (validate + upsert + free or Stripe checkout)
-router.post("/event/:eventId/register", authMiddleware, teamController.registerTeam);
+router.post(
+  "/event/:eventId/register",
+  authMiddleware,
+  requireVerified,
+  teamController.registerTeam
+);
 
 // Stripe success redirect — marks team as paid
 router.get("/:teamId/payment-success", teamController.handlePaymentSuccess);

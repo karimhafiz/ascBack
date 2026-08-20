@@ -1,28 +1,22 @@
-const dns = require("dns");
 const mongoose = require("mongoose");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const Ticket = require("../models/Ticket");
 const Event = require("../models/Event");
 const EventSubscription = require("../models/EventSubscription");
 const User = require("../models/User");
-const { sendTicketConfirmationEmail } = require("../utils/emailUtils");
+const {
+  sendTicketConfirmationEmail,
+  sendTicketResendLinkEmail,
+  verifyEmailDomain,
+} = require("../utils/emailUtils");
+const {
+  issueVerificationToken,
+  consumeVerificationToken,
+} = require("../utils/verificationTokenUtils");
 const { respondStripeOutage } = require("../utils/stripeErrorUtils");
 const logger = require("../utils/logger");
 
-/**
- * Verify an email domain has MX records (i.e. can actually receive mail).
- * Returns true if valid, false if the domain has no MX records.
- */
-const verifyEmailDomain = (email) => {
-  return new Promise((resolve) => {
-    const domain = email.split("@")[1];
-    if (!domain) return resolve(false);
-    dns.resolveMx(domain, (err, addresses) => {
-      if (err || !addresses || addresses.length === 0) return resolve(false);
-      resolve(true);
-    });
-  });
-};
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Shared logic for both authenticated and guest checkout
 const buildCheckoutSession = async ({ email, eventId, rawQuantity, res }) => {
@@ -351,5 +345,79 @@ exports.getSession = async (req, res) => {
   } catch (err) {
     logger.error(err, "Error retrieving session");
     res.status(500).json({ error: "Failed to retrieve session" });
+  }
+};
+
+// POST /payments/resend/request — guest ticket recovery.
+// Always returns the same generic response regardless of whether the email
+// has any paid tickets, to avoid leaking who has purchased a ticket.
+exports.requestTicketResend = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email || typeof email !== "string" || !EMAIL_REGEX.test(email.trim())) {
+      return res.status(400).json({ error: "A valid email address is required" });
+    }
+
+    const normalisedEmail = email.trim().toLowerCase();
+    const hasTickets = await Ticket.exists({ buyerEmail: normalisedEmail, status: "paid" });
+    if (hasTickets) {
+      const token = await issueVerificationToken({
+        email: normalisedEmail,
+        purpose: "ticket_resend",
+      });
+      const frontEndUrl = process.env.FRONT_END_URL || "http://localhost:5173/";
+      const link = `${frontEndUrl}tickets/recover?token=${token}`;
+      sendTicketResendLinkEmail({ email: normalisedEmail, link }).catch((err) =>
+        logger.error(err, "Failed to send ticket resend link email")
+      );
+    }
+
+    res.json({ message: "If that email has a ticket, we've sent a link to it." });
+  } catch (err) {
+    logger.error(err, "Error requesting ticket resend");
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+// POST /payments/resend/confirm — verifies the recovery token, serves the
+// ticket(s) directly, and resends the original confirmation email so the
+// buyer ends up with both an instant view and a fresh permanent copy.
+exports.confirmTicketResend = async (req, res) => {
+  try {
+    const { token } = req.body;
+    const email = await consumeVerificationToken({ token, purpose: "ticket_resend" });
+    if (!email) {
+      return res.status(400).json({ error: "This link has expired or is invalid." });
+    }
+
+    const tickets = await Ticket.find({ buyerEmail: email, status: "paid" }).populate(
+      "eventId",
+      "title date openingTime street city postCode typeOfEvent images ticketPrice"
+    );
+    if (!tickets.length) {
+      return res.status(404).json({ error: "We couldn't find a ticket for this link." });
+    }
+
+    // A guest can have tickets across multiple events — group by event so
+    // each resend email only ever describes tickets for a single event,
+    // same as the original purchase confirmation.
+    const ticketsByEvent = new Map();
+    for (const ticket of tickets) {
+      const eventId = ticket.eventId._id.toString();
+      if (!ticketsByEvent.has(eventId)) ticketsByEvent.set(eventId, []);
+      ticketsByEvent.get(eventId).push(ticket);
+    }
+    for (const eventTickets of ticketsByEvent.values()) {
+      sendTicketConfirmationEmail({
+        buyerEmail: email,
+        tickets: eventTickets,
+        event: eventTickets[0].eventId,
+      }).catch((err) => logger.error(err, "Failed to resend ticket confirmation email"));
+    }
+
+    res.json({ tickets, email });
+  } catch (err) {
+    logger.error(err, "Error confirming ticket resend");
+    res.status(500).json({ error: "Server error" });
   }
 };

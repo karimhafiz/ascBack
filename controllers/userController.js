@@ -14,7 +14,14 @@ const {
   clearRefreshTokenCookie,
   setRefreshTokenExpiration,
 } = require("../utils/tokenUtils");
+const { verifyEmailDomain, sendAccountVerificationEmail } = require("../utils/emailUtils");
+const {
+  issueVerificationToken,
+  consumeVerificationToken,
+} = require("../utils/verificationTokenUtils");
 const logger = require("../utils/logger");
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 exports.register = async (req, res) => {
   try {
@@ -23,11 +30,19 @@ exports.register = async (req, res) => {
     if (!name || !name.trim()) {
       return res.status(400).json({ error: "Name is required" });
     }
-    if (!email || !email.trim()) {
-      return res.status(400).json({ error: "Email is required" });
+    if (!email || typeof email !== "string" || !EMAIL_REGEX.test(email.trim())) {
+      return res.status(400).json({ error: "A valid email address is required" });
     }
     if (!password || password.length < 6) {
       return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+
+    const emailDomainValid = await verifyEmailDomain(email.trim().toLowerCase());
+    if (!emailDomainValid) {
+      return res.status(400).json({
+        error:
+          "This email domain does not appear to accept emails. Please use a valid email address.",
+      });
     }
 
     const existingUser = await User.findOne({ email });
@@ -52,9 +67,71 @@ exports.register = async (req, res) => {
       role: "user",
     });
     await user.save();
-    res.status(201).json({ message: "User registered successfully" });
+
+    sendVerificationLink(user.email).catch((err) =>
+      logger.error(err, "Failed to send account verification email")
+    );
+
+    res.status(201).json({
+      message: "User registered successfully. Please check your email to verify your account.",
+    });
   } catch (err) {
     logger.error(err, "Registration error");
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+async function sendVerificationLink(email) {
+  const token = await issueVerificationToken({ email, purpose: "account_verification" });
+  const frontEndUrl = process.env.FRONT_END_URL || "http://localhost:5173/";
+  const link = `${frontEndUrl}verify-email?token=${token}`;
+  await sendAccountVerificationEmail({ email, link });
+}
+
+// POST /users/verify-email/request — resend the verification link.
+// Always returns a generic response, whether or not the email exists/is
+// already verified, to avoid leaking account existence.
+exports.requestEmailVerification = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email || typeof email !== "string" || !EMAIL_REGEX.test(email.trim())) {
+      return res.status(400).json({ error: "A valid email address is required" });
+    }
+
+    const normalisedEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: normalisedEmail });
+    if (user && !user.isVerified) {
+      logger.info({ email: normalisedEmail }, "Sending account verification link");
+      sendVerificationLink(normalisedEmail)
+        .then(() => logger.info({ email: normalisedEmail }, "Account verification link sent"))
+        .catch((err) => logger.error(err, "Failed to send account verification email"));
+    } else {
+      logger.info(
+        { email: normalisedEmail, userFound: Boolean(user), alreadyVerified: user?.isVerified },
+        "Verification link request skipped"
+      );
+    }
+
+    res.json({ message: "If that email needs verifying, we've sent a link to it." });
+  } catch (err) {
+    logger.error(err, "Error requesting email verification");
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+// POST /users/verify-email/confirm
+exports.confirmEmailVerification = async (req, res) => {
+  try {
+    const { token } = req.body;
+    const email = await consumeVerificationToken({ token, purpose: "account_verification" });
+    if (!email) {
+      return res.status(400).json({ error: "This link has expired or is invalid." });
+    }
+
+    await User.findOneAndUpdate({ email }, { isVerified: true });
+    res.json({ message: "Email verified successfully." });
+  } catch (err) {
+    logger.error(err, "Error confirming email verification");
     res.status(500).json({ error: "Server error" });
   }
 };
@@ -109,7 +186,13 @@ exports.login = async (req, res) => {
 
     res.json({
       accessToken,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isVerified: user.isVerified,
+      },
     });
   } catch (err) {
     logger.error(err, "Login error");
@@ -153,7 +236,13 @@ exports.refresh = async (req, res) => {
 
     res.json({
       accessToken,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isVerified: user.isVerified,
+      },
     });
   } catch (err) {
     logger.error(err, "Refresh error");

@@ -37,8 +37,8 @@ const courseSchema = new mongoose.Schema(
     timestamps: true,
     validate: {
       validator: function () {
-        const hasProduct = !!this.stripeProductId;
-        const hasPrice = !!this.stripePriceId;
+        const hasProduct = Boolean(this.stripeProductId);
+        const hasPrice = Boolean(this.stripePriceId);
         return hasProduct === hasPrice;
       },
       message: "stripeProductId and stripePriceId must both be set or both be null",
