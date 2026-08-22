@@ -42,11 +42,6 @@ const buildCheckoutSession = async ({ email, eventId, rawQuantity, res }) => {
       return res.status(400).json({ error: "Not enough tickets available" });
     }
 
-    // Idempotency key prevents duplicate checkout sessions from double-clicks.
-    // 10-second bucket means rapid retries within 10s return the same session.
-    const timeBucket = Math.floor(Date.now() / 10000);
-    const idempotencyKey = `ticket-${eventId}-${email}-${quantity}-${timeBucket}`;
-
     const isSubscription = event.isReoccurring && event.stripePriceId;
 
     let sessionConfig;
@@ -102,7 +97,7 @@ const buildCheckoutSession = async ({ email, eventId, rawQuantity, res }) => {
       };
     }
 
-    const session = await stripe.checkout.sessions.create(sessionConfig, { idempotencyKey });
+    const session = await stripe.checkout.sessions.create(sessionConfig);
 
     // Create a pending EventSubscription record for subscription checkouts
     if (isSubscription) {

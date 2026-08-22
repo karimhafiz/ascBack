@@ -88,8 +88,7 @@ describe("Guest Checkout — POST /api/payments/guest-checkout-session", () => {
           email: "guest@example.com",
           quantity: "2",
         }),
-      }),
-      expect.objectContaining({ idempotencyKey: expect.any(String) })
+      })
     );
   });
 
@@ -113,8 +112,7 @@ describe("Guest Checkout — POST /api/payments/guest-checkout-session", () => {
     expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
       expect.objectContaining({
         customer_email: "guest@example.com",
-      }),
-      expect.any(Object)
+      })
     );
   });
 
@@ -185,8 +183,7 @@ describe("Guest Checkout — POST /api/payments/guest-checkout-session", () => {
 
     expect(res.status).toBe(200);
     expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
-      expect.objectContaining({ mode: "payment" }),
-      expect.any(Object)
+      expect.objectContaining({ mode: "payment" })
     );
   });
 
