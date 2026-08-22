@@ -26,8 +26,12 @@ jest.mock("../../config/emailConfig", () => ({
 jest.mock("../../utils/ticketUtils", () => ({
   generateUniqueCode: jest.fn().mockResolvedValue("VBK-ABC123"),
 }));
+jest.mock("../../utils/cloudinaryUtils", () => ({
+  deleteCloudinaryImage: jest.fn().mockResolvedValue(true),
+}));
 
 const venueController = require("../../controllers/venueController");
+const { deleteCloudinaryImage } = require("../../utils/cloudinaryUtils");
 const Venue = require("../../models/Venue");
 const VenueSlot = require("../../models/VenueSlot");
 const VenueBooking = require("../../models/VenueBooking");
@@ -115,6 +119,63 @@ describe("Venue Controller", () => {
 
       expect(response.status).toBe(403);
       expect(response.body.error).toContain("Only admins and moderators");
+    });
+
+    it("should persist an uploaded image onto the created venue", async () => {
+      const adminApp = express();
+      adminApp.use(express.json());
+      adminApp.use((req, res, next) => {
+        req.user = { _id: adminUserId, id: adminUserId, role: "admin", email: "admin@test.com" };
+        req.file = { secure_url: "https://res.cloudinary.com/demo/venue.jpg" };
+        next();
+      });
+      adminApp.post("/api/venues", venueController.createVenue);
+
+      let savedData;
+      Venue.mockImplementationOnce(function (data) {
+        savedData = data;
+        Object.assign(this, data);
+        this.save = jest.fn().mockResolvedValue(true);
+      });
+
+      const response = await request(adminApp)
+        .post("/api/venues")
+        .send({ name: "Community Centre", street: "123 Main St", city: "London" });
+
+      expect(response.status).toBe(201);
+      expect(savedData.images).toEqual(["https://res.cloudinary.com/demo/venue.jpg"]);
+    });
+  });
+
+  describe("PUT /api/venues/:venueId - Update Venue", () => {
+    it("should replace the venue image and delete the old one from Cloudinary", async () => {
+      const mockVenue = {
+        _id: validVenueId,
+        name: "Community Centre",
+        images: ["https://res.cloudinary.com/demo/old.jpg"],
+        save: jest.fn().mockResolvedValue(true),
+      };
+      Venue.findById.mockResolvedValue(mockVenue);
+
+      const uploadApp = express();
+      uploadApp.use(express.json());
+      uploadApp.use((req, res, next) => {
+        req.user = { _id: adminUserId, id: adminUserId, role: "admin", email: "admin@test.com" };
+        req.file = { secure_url: "https://res.cloudinary.com/demo/new.jpg" };
+        next();
+      });
+      uploadApp.put("/api/venues/:venueId", venueController.updateVenue);
+
+      const response = await request(uploadApp)
+        .put(`/api/venues/${validVenueId}`)
+        .send({ name: "Community Centre" });
+
+      expect(response.status).toBe(200);
+      expect(deleteCloudinaryImage).toHaveBeenCalledWith(
+        "https://res.cloudinary.com/demo/old.jpg",
+        "venue-images"
+      );
+      expect(mockVenue.images).toEqual(["https://res.cloudinary.com/demo/new.jpg"]);
     });
   });
 

@@ -10,6 +10,7 @@ const {
 } = require("../utils/emailUtils");
 const { generateUniqueCode } = require("../utils/ticketUtils");
 const { respondStripeOutage } = require("../utils/stripeErrorUtils");
+const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
 const logger = require("../utils/logger");
 
 const DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
@@ -49,6 +50,8 @@ exports.createVenue = async (req, res) => {
   try {
     const sanitized = sanitizeVenue(req.body);
     sanitized.managedBy = req.user.id;
+    const imageUrl = req.file ? req.file.secure_url || req.file.path : null;
+    if (imageUrl) sanitized.images = [imageUrl];
     const venue = new Venue(sanitized);
     await venue.save();
     res.status(201).json({ message: "Venue created successfully", venue });
@@ -85,7 +88,17 @@ exports.updateVenue = async (req, res) => {
   try {
     const venue = await Venue.findById(req.params.venueId);
     if (!venue) return res.status(404).json({ error: "Venue not found" });
-    Object.assign(venue, sanitizeVenue(req.body));
+
+    const sanitized = sanitizeVenue(req.body);
+    Object.assign(venue, sanitized);
+
+    if (req.file) {
+      if (venue.images && venue.images.length > 0) {
+        await deleteCloudinaryImage(venue.images[0], "venue-images");
+      }
+      venue.images = [req.file.secure_url || req.file.path];
+    }
+
     await venue.save();
     res.json({ message: "Venue updated successfully", venue });
   } catch (error) {
