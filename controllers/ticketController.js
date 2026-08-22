@@ -71,11 +71,6 @@ exports.getAllTickets = async (req, res) => {
           ticketsSold: {
             $sum: { $cond: [{ $eq: ["$status", "paid"] }, 1, 0] },
           },
-          ticketsCanceled: {
-            $sum: {
-              $cond: [{ $in: ["$status", ["failed", "canceled"]] }, 1, 0],
-            },
-          },
         },
       },
       {
@@ -83,7 +78,6 @@ exports.getAllTickets = async (req, res) => {
           _id: 0,
           title: 1,
           ticketsSold: 1,
-          ticketsCanceled: 1,
           totalRevenue: {
             $round: [{ $multiply: ["$ticketsSold", "$ticketPrice"] }, 2],
           },
