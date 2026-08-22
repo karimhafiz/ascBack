@@ -280,6 +280,7 @@ exports.handleSuccess = async (req, res) => {
       `${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}&ticket_id=${ticketIds[0]}`
     );
   } catch (err) {
+    if (respondStripeOutage(res, err, "ticketPaymentController.handleSuccess")) return;
     logger.error(err, "Payment for ticket failed");
     res.status(500).json({ error: "Failed to process payment confirmation" });
   }
@@ -310,6 +311,7 @@ exports.getGuestOrder = async (req, res) => {
       quantity: parseInt(session.metadata.quantity, 10),
     });
   } catch (err) {
+    if (respondStripeOutage(res, err, "ticketPaymentController.getGuestOrder")) return;
     logger.error(err, "Error fetching guest order");
     res.status(500).json({ error: "Failed to fetch order details" });
   }
@@ -338,6 +340,7 @@ exports.getSession = async (req, res) => {
       quantity: session.metadata.quantity,
     });
   } catch (err) {
+    if (respondStripeOutage(res, err, "ticketPaymentController.getSession")) return;
     logger.error(err, "Error retrieving session");
     res.status(500).json({ error: "Failed to retrieve session" });
   }
