@@ -328,7 +328,7 @@ exports.generateScheduleSlots = async (req, res) => {
       dayMap[entry.dayOfWeek].push({ startTime: entry.startTime, endTime: entry.endTime });
     }
 
-    const slotsToCreate = [];
+    const candidates = [];
     const cursor = new Date(start);
 
     while (cursor <= end) {
@@ -336,7 +336,7 @@ exports.generateScheduleSlots = async (req, res) => {
       const entries = dayMap[dayName];
       if (entries) {
         for (const { startTime, endTime } of entries) {
-          slotsToCreate.push({
+          candidates.push({
             venue: venueId,
             date: new Date(cursor),
             startTime,
@@ -350,18 +350,59 @@ exports.generateScheduleSlots = async (req, res) => {
       cursor.setDate(cursor.getDate() + 1);
     }
 
-    if (slotsToCreate.length === 0) {
+    if (candidates.length === 0) {
       return res.status(400).json({ error: "No matching days found in the date range" });
+    }
+
+    // Filter out any candidate that overlaps a slot already in the DB —
+    // insertMany's duplicate-key skip below only catches an *exact* same
+    // start time, not a genuine overlap at a different one (e.g. a manually
+    // added slot, or a leftover from a template that's since changed).
+    const existingSlots = await VenueSlot.find({
+      venue: venueId,
+      date: { $gte: start, $lte: end },
+    })
+      .select("date startTime endTime")
+      .lean();
+
+    const existingByDate = {};
+    for (const s of existingSlots) {
+      (existingByDate[s.date.toDateString()] ||= []).push(s);
+    }
+    for (const key of Object.keys(existingByDate)) {
+      existingByDate[key].sort(byStartTime);
+    }
+
+    const slotsToCreate = [];
+    let skippedForOverlap = 0;
+    for (const candidate of candidates) {
+      const existingOnDate = existingByDate[candidate.date.toDateString()] || [];
+      if (findOverlaps(candidate, existingOnDate).length > 0) {
+        skippedForOverlap++;
+      } else {
+        slotsToCreate.push(candidate);
+      }
+    }
+
+    if (slotsToCreate.length === 0) {
+      return res.status(400).json({
+        error: `All ${skippedForOverlap} matching slot(s) in this range are already occupied — nothing generated.`,
+      });
     }
 
     try {
       const result = await VenueSlot.insertMany(slotsToCreate, { ordered: false });
-      res.status(201).json({ message: `${result.length} slot(s) generated`, slots: result });
+      const occupiedNote =
+        skippedForOverlap > 0 ? ` (${skippedForOverlap} skipped — already occupied)` : "";
+      res
+        .status(201)
+        .json({ message: `${result.length} slot(s) generated${occupiedNote}`, slots: result });
     } catch (error) {
       if (error.code === 11000 || error.name === "MongoBulkWriteError") {
         const inserted = error.insertedDocs ?? [];
+        const occupiedNote = skippedForOverlap > 0 ? `, ${skippedForOverlap} already occupied` : "";
         return res.status(201).json({
-          message: `${inserted.length} slot(s) generated (some already existed and were skipped)`,
+          message: `${inserted.length} slot(s) generated (some already existed${occupiedNote} and were skipped)`,
           slots: inserted,
         });
       }

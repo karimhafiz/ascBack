@@ -446,6 +446,95 @@ describe("Venue Controller", () => {
     });
   });
 
+  describe("POST /api/venues/:venueId/slots/generate - Generate Schedule Slots", () => {
+    // Both 2026-05-04 and 2026-05-11 are Mondays.
+    const weeklySchedule = [{ dayOfWeek: "monday", startTime: "09:00", endTime: "13:00" }];
+
+    function makeGenerateApp() {
+      const generateApp = express();
+      generateApp.use(express.json());
+      generateApp.use((req, res, next) => {
+        req.user = { _id: adminUserId, id: adminUserId, role: "admin", email: "admin@test.com" };
+        next();
+      });
+      generateApp.post(
+        "/api/venues/:venueId/slots/generate",
+        venueController.generateScheduleSlots
+      );
+      return generateApp;
+    }
+
+    it("generates a slot for every matching day when nothing conflicts", async () => {
+      Venue.findById.mockResolvedValue({ _id: validVenueId, weeklySchedule });
+      VenueSlot.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+      });
+      VenueSlot.insertMany.mockResolvedValue([
+        { date: new Date("2026-05-04"), startTime: "09:00", endTime: "13:00" },
+        { date: new Date("2026-05-11"), startTime: "09:00", endTime: "13:00" },
+      ]);
+
+      const response = await request(makeGenerateApp())
+        .post(`/api/venues/${validVenueId}/slots/generate`)
+        .send({ fromDate: "2026-05-04", toDate: "2026-05-11" });
+
+      expect(response.status).toBe(201);
+      expect(response.body.message).toBe("2 slot(s) generated");
+      expect(VenueSlot.insertMany).toHaveBeenCalledWith(
+        expect.arrayContaining([expect.objectContaining({ startTime: "09:00" })]),
+        { ordered: false }
+      );
+    });
+
+    it("silently skips a candidate that overlaps an existing slot and reports it", async () => {
+      Venue.findById.mockResolvedValue({ _id: validVenueId, weeklySchedule });
+      // An existing manually-created slot occupies 2026-05-04's 09:00-13:00 window.
+      VenueSlot.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest
+            .fn()
+            .mockResolvedValue([
+              { date: new Date("2026-05-04"), startTime: "10:00", endTime: "11:00" },
+            ]),
+        }),
+      });
+      VenueSlot.insertMany.mockResolvedValue([
+        { date: new Date("2026-05-11"), startTime: "09:00", endTime: "13:00" },
+      ]);
+
+      const response = await request(makeGenerateApp())
+        .post(`/api/venues/${validVenueId}/slots/generate`)
+        .send({ fromDate: "2026-05-04", toDate: "2026-05-11" });
+
+      expect(response.status).toBe(201);
+      expect(response.body.message).toBe("1 slot(s) generated (1 skipped — already occupied)");
+      // Only the non-conflicting 05-11 candidate should have been inserted.
+      const inserted = VenueSlot.insertMany.mock.calls[0][0];
+      expect(inserted).toHaveLength(1);
+      expect(inserted[0].date.toDateString()).toBe(new Date("2026-05-11").toDateString());
+    });
+
+    it("returns 400 and generates nothing when every candidate is already occupied", async () => {
+      Venue.findById.mockResolvedValue({ _id: validVenueId, weeklySchedule });
+      VenueSlot.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            { date: new Date("2026-05-04"), startTime: "10:00", endTime: "11:00" },
+            { date: new Date("2026-05-11"), startTime: "10:00", endTime: "11:00" },
+          ]),
+        }),
+      });
+
+      const response = await request(makeGenerateApp())
+        .post(`/api/venues/${validVenueId}/slots/generate`)
+        .send({ fromDate: "2026-05-04", toDate: "2026-05-11" });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("already occupied");
+      expect(VenueSlot.insertMany).not.toHaveBeenCalled();
+    });
+  });
+
   describe("GET /api/venues/:venueId/slots - Get Available Slots", () => {
     it("should fetch available slots", async () => {
       const mockSlots = [
