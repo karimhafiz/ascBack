@@ -129,6 +129,16 @@ exports.getVenue = async (req, res) => {
   try {
     const venue = await Venue.findById(req.params.venueId).populate("managedBy", "name email");
     if (!venue) return res.status(404).json({ error: "Venue not found" });
+
+    // How far ahead this venue's bookable slots currently reach — surfaced so
+    // admins/moderators can see at a glance whether it's time to generate
+    // more (slot generation is manual by design, see generateScheduleSlots).
+    const latestSlot = await VenueSlot.findOne({ venue: venue._id })
+      .sort({ date: -1 })
+      .select("date")
+      .lean();
+    venue.slotHorizon = latestSlot ? latestSlot.date : null;
+
     res.json(venue);
   } catch (error) {
     logger.error(error, "Error fetching venue");

@@ -264,11 +264,19 @@ describe("Venue Controller", () => {
       Venue.findById.mockReturnValue({
         populate: jest.fn().mockResolvedValue(mockVenue),
       });
+      VenueSlot.findOne.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({
+            lean: jest.fn().mockResolvedValue(null),
+          }),
+        }),
+      });
 
       const response = await request(app).get(`/api/venues/${validVenueId}`);
 
       expect(response.status).toBe(200);
       expect(response.body.name).toBe("Community Centre");
+      expect(response.body.slotHorizon).toBeNull();
     });
 
     it("should return 404 for non-existent venue", async () => {
