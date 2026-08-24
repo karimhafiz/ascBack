@@ -40,7 +40,15 @@ const courseController = require("../../controllers/courseController");
 const Course = require("../../models/Course");
 const CourseEnrollment = require("../../models/CourseEnrollment");
 const User = require("../../models/User");
-// WebhookEvent is auto-mocked above — no direct reference needed in tests
+const WebhookEvent = require("../../models/WebhookEvent");
+
+function mockRes() {
+  return {
+    status: jest.fn().mockReturnThis(),
+    json: jest.fn().mockReturnThis(),
+    redirect: jest.fn(),
+  };
+}
 
 // Reusable valid ObjectIds
 const validCourseId = new mongoose.Types.ObjectId().toString();
@@ -422,6 +430,237 @@ describe("Course Controller", () => {
 
       const res = await request(app).post(`/api/courses/enrollments/${validEnrollmentId}/cancel`);
       expect(res.status).toBe(403);
+    });
+  });
+
+  // ─── POST /enrollments/:enrollmentId/reactivate ───────────────────────────────
+
+  describe("reactivateSubscription", () => {
+    it("should reactivate directly when Stripe sub exists", async () => {
+      const req = {
+        params: { enrollmentId: validEnrollmentId },
+        user: { id: validUserId, email: "user@test.com", role: "user" },
+      };
+      const res = mockRes();
+
+      CourseEnrollment.findById.mockResolvedValue({
+        _id: validEnrollmentId,
+        user: validUserId,
+        subscriptionId: "sub_123",
+        subscriptionStatus: "cancelled",
+        buyerEmail: "user@test.com",
+        courseId: validCourseId,
+      });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({ status: "active" });
+      mockStripe.subscriptions.update.mockResolvedValue({
+        id: "sub_123",
+        items: { data: [{ current_period_end: 1700000000 }] },
+      });
+      CourseEnrollment.findByIdAndUpdate.mockResolvedValue({});
+
+      await courseController.reactivateSubscription(req, res);
+
+      expect(mockStripe.subscriptions.update).toHaveBeenCalledWith("sub_123", {
+        cancel_at_period_end: false,
+      });
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "Subscription reactivated successfully." })
+      );
+    });
+
+    it("should return checkout URL when Stripe sub is gone", async () => {
+      const req = {
+        params: { enrollmentId: validEnrollmentId },
+        user: { id: validUserId, email: "user@test.com", role: "user" },
+      };
+      const res = mockRes();
+
+      CourseEnrollment.findById.mockResolvedValue({
+        _id: validEnrollmentId,
+        user: validUserId,
+        subscriptionId: "sub_deleted",
+        subscriptionStatus: "cancelled",
+        buyerEmail: "user@test.com",
+        courseId: validCourseId,
+        participants: [{ name: "Test" }],
+      });
+      mockStripe.subscriptions.retrieve.mockRejectedValue({ code: "resource_missing" });
+      Course.findById.mockResolvedValue({
+        _id: validCourseId,
+        stripePriceId: "price_123",
+        title: "English",
+      });
+      mockStripe.checkout.sessions.create.mockResolvedValue({
+        id: "cs_reactivate",
+        url: "https://checkout.stripe.com/pay/cs_reactivate",
+      });
+      CourseEnrollment.findByIdAndUpdate.mockResolvedValue({});
+
+      await courseController.reactivateSubscription(req, res);
+
+      expect(res.json).toHaveBeenCalledWith({
+        url: "https://checkout.stripe.com/pay/cs_reactivate",
+      });
+    });
+
+    it("should return 400 if subscription is not cancelled", async () => {
+      const req = {
+        params: { enrollmentId: validEnrollmentId },
+        user: { id: validUserId, email: "user@test.com", role: "user" },
+      };
+      const res = mockRes();
+
+      CourseEnrollment.findById.mockResolvedValue({
+        _id: validEnrollmentId,
+        user: validUserId,
+        subscriptionId: "sub_123",
+        subscriptionStatus: "active",
+        buyerEmail: "user@test.com",
+      });
+
+      await courseController.reactivateSubscription(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: "Subscription is not cancelled" })
+      );
+    });
+  });
+
+  // ─── POST /courses/webhook ─────────────────────────────────────────────────────
+
+  describe("handleWebhook", () => {
+    it("should handle invoice.payment_succeeded", async () => {
+      const req = {
+        body: Buffer.from("{}"),
+        headers: { "stripe-signature": "sig_test" },
+      };
+      const res = mockRes();
+
+      mockStripe.webhooks.constructEvent.mockReturnValue({
+        id: "evt_1",
+        type: "invoice.payment_succeeded",
+        created: 1000,
+        data: { object: { subscription: "sub_123", amount_paid: 5000 } },
+      });
+      WebhookEvent.findOne.mockResolvedValue(null);
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        id: "sub_123",
+        items: { data: [{ current_period_end: 1700000000 }] },
+      });
+      CourseEnrollment.findOneAndUpdate.mockResolvedValue({});
+      WebhookEvent.create.mockResolvedValue({});
+
+      await courseController.handleWebhook(req, res);
+
+      expect(CourseEnrollment.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ subscriptionId: "sub_123" }),
+        expect.objectContaining({
+          $set: expect.objectContaining({ subscriptionStatus: "active", status: "active" }),
+          $inc: { totalAmountPaid: 50 },
+        })
+      );
+      expect(res.json).toHaveBeenCalledWith({ received: true });
+    });
+
+    it("should handle invoice.payment_failed", async () => {
+      const req = {
+        body: Buffer.from("{}"),
+        headers: { "stripe-signature": "sig_test" },
+      };
+      const res = mockRes();
+
+      mockStripe.webhooks.constructEvent.mockReturnValue({
+        id: "evt_2",
+        type: "invoice.payment_failed",
+        created: 1001,
+        data: { object: { subscription: "sub_123" } },
+      });
+      WebhookEvent.findOne.mockResolvedValue(null);
+      CourseEnrollment.findOneAndUpdate.mockResolvedValue({});
+      WebhookEvent.create.mockResolvedValue({});
+
+      await courseController.handleWebhook(req, res);
+
+      expect(CourseEnrollment.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ subscriptionId: "sub_123" }),
+        expect.objectContaining({ subscriptionStatus: "past_due", status: "past_due" })
+      );
+      expect(res.json).toHaveBeenCalledWith({ received: true });
+    });
+
+    it("should handle customer.subscription.deleted with transaction, decrementing by participant count", async () => {
+      const req = {
+        body: Buffer.from("{}"),
+        headers: { "stripe-signature": "sig_test" },
+      };
+      const res = mockRes();
+
+      mockStripe.webhooks.constructEvent.mockReturnValue({
+        id: "evt_3",
+        type: "customer.subscription.deleted",
+        created: 1002,
+        data: { object: { id: "sub_123" } },
+      });
+      WebhookEvent.findOne.mockResolvedValue(null);
+      CourseEnrollment.findOneAndUpdate.mockResolvedValue({
+        courseId: validCourseId,
+        participants: [{ name: "A" }, { name: "B" }],
+      });
+      Course.findByIdAndUpdate.mockResolvedValue({});
+      WebhookEvent.create.mockResolvedValue({});
+
+      await courseController.handleWebhook(req, res);
+
+      expect(mongoose.startSession).toHaveBeenCalled();
+      expect(CourseEnrollment.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ subscriptionId: "sub_123" }),
+        expect.objectContaining({ subscriptionStatus: "cancelled", status: "cancelled" }),
+        expect.objectContaining({ session: mockMongoSession })
+      );
+      expect(Course.findByIdAndUpdate).toHaveBeenCalledWith(
+        validCourseId,
+        { $inc: { currentEnrollment: -2 } },
+        expect.objectContaining({ session: mockMongoSession })
+      );
+      expect(res.json).toHaveBeenCalledWith({ received: true });
+    });
+
+    it("should skip duplicate events (idempotency)", async () => {
+      const req = {
+        body: Buffer.from("{}"),
+        headers: { "stripe-signature": "sig_test" },
+      };
+      const res = mockRes();
+
+      mockStripe.webhooks.constructEvent.mockReturnValue({
+        id: "evt_dup",
+        type: "invoice.payment_succeeded",
+        created: 1000,
+        data: { object: { subscription: "sub_123" } },
+      });
+      WebhookEvent.findOne.mockResolvedValue({ stripeEventId: "evt_dup" });
+
+      await courseController.handleWebhook(req, res);
+
+      expect(res.json).toHaveBeenCalledWith({ received: true, duplicate: true });
+      expect(CourseEnrollment.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it("should return 400 for invalid webhook signature", async () => {
+      const req = {
+        body: Buffer.from("{}"),
+        headers: { "stripe-signature": "bad_sig" },
+      };
+      const res = mockRes();
+
+      mockStripe.webhooks.constructEvent.mockImplementation(() => {
+        throw new Error("Invalid signature");
+      });
+
+      await courseController.handleWebhook(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
     });
   });
 

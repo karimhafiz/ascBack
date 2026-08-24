@@ -2,7 +2,6 @@ const mongoose = require("mongoose");
 const Course = require("../models/Course");
 const CourseEnrollment = require("../models/CourseEnrollment");
 const User = require("../models/User");
-const WebhookEvent = require("../models/WebhookEvent");
 const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
 const {
   sendCourseEnrollmentEmail,
@@ -11,25 +10,13 @@ const {
 const { generateUniqueCode } = require("../utils/ticketUtils");
 const { respondStripeOutage } = require("../utils/stripeErrorUtils");
 const logger = require("../utils/logger");
+const {
+  resolveCurrentPeriodEnd,
+  createCancelSubscriptionHandler,
+  createReactivateSubscriptionHandler,
+  createWebhookHandler,
+} = require("../utils/subscriptionLifecycle");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-
-// Stripe moved current_period_end from subscription to subscription item
-function getSubPeriodEnd(sub) {
-  return sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
-}
-
-function resolveCurrentPeriodEnd(sub, fallbackInterval = "month") {
-  const periodTs = getSubPeriodEnd(sub);
-  if (periodTs) return new Date(periodTs * 1000);
-  logger.warn(
-    { subscriptionId: sub.id },
-    "Missing current_period_end for subscription, using fallback"
-  );
-  const now = new Date();
-  if (fallbackInterval === "year") now.setFullYear(now.getFullYear() + 1);
-  else now.setMonth(now.getMonth() + 1);
-  return now;
-}
 
 // Create a Stripe product + recurring price for a subscription course,
 // then persist the IDs back to the course document.
@@ -545,172 +532,55 @@ exports.getCourseEnrollments = async (req, res) => {
 // User cancels their subscription — cancels at period end in Stripe so they
 // keep access until the date they've already paid for.
 // ─────────────────────────────────────────────────────────────────────────────
-exports.cancelSubscription = async (req, res) => {
-  try {
-    const { enrollmentId } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(enrollmentId)) {
-      return res.status(400).json({ error: "Invalid enrollment ID" });
-    }
-
-    const enrollment = await CourseEnrollment.findById(enrollmentId);
-    if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
-
-    const ownerId = enrollment.user?.toString();
-    const isOwner = ownerId ? ownerId === req.user.id : enrollment.buyerEmail === req.user.email;
-    if (!isOwner && req.user.role !== "admin") {
-      return res.status(403).json({ error: "Not authorised" });
-    }
-
-    if (!enrollment.subscriptionId) {
-      return res.status(400).json({ error: "This enrollment is not a subscription" });
-    }
-
-    if (enrollment.subscriptionStatus === "cancelled") {
-      return res.status(400).json({ error: "Subscription is already cancelled" });
-    }
-
-    const updatedSub = await stripe.subscriptions.update(enrollment.subscriptionId, {
-      cancel_at_period_end: true,
-    });
-
-    const periodEnd = resolveCurrentPeriodEnd(updatedSub);
-
-    await CourseEnrollment.findByIdAndUpdate(enrollmentId, {
-      subscriptionStatus: "cancelled",
+exports.cancelSubscription = createCancelSubscriptionHandler({
+  Model: CourseEnrollment,
+  idParam: "enrollmentId",
+  invalidIdError: "Invalid enrollment ID",
+  notFoundError: "Enrollment not found",
+  notSubscriptionError: "This enrollment is not a subscription",
+  getParent: (enrollment) => Course.findById(enrollment.courseId),
+  sendCancellationEmail: (enrollment, course, periodEnd) =>
+    sendSubscriptionCancellationEmail({
+      buyerEmail: enrollment.buyerEmail,
+      course,
       currentPeriodEnd: periodEnd,
-    });
-    // this could use better handling and let the user know theres no course with that courseId (if necessary)
-    const course = await Course.findById(enrollment.courseId);
-    if (course) {
-      sendSubscriptionCancellationEmail({
-        buyerEmail: enrollment.buyerEmail,
-        course,
-        currentPeriodEnd: periodEnd,
-      }).catch((err) => logger.error(err, "Failed to send cancellation email"));
-    }
-
-    res.json({
-      message:
-        "Subscription cancelled. You will retain access until the end of your current billing period.",
-      currentPeriodEnd: periodEnd,
-    });
-  } catch (err) {
-    if (respondStripeOutage(res, err, "courseController.cancelSubscription")) return;
-    logger.error(err, "Error cancelling subscription");
-    res.status(500).json({ error: "Failed to cancel subscription" });
-  }
-};
+    }),
+  logContext: "courseController",
+});
 
 // ─── POST /courses/enrollments/:enrollmentId/reactivate ─────────────────────
 // User reactivates a subscription that was cancelled but hasn't expired yet.
 // Removes cancel_at_period_end in Stripe so the subscription continues renewing.
 // ─────────────────────────────────────────────────────────────────────────────
-exports.reactivateSubscription = async (req, res) => {
-  try {
-    const { enrollmentId } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(enrollmentId)) {
-      return res.status(400).json({ error: "Invalid enrollment ID" });
-    }
-
-    const enrollment = await CourseEnrollment.findById(enrollmentId);
-    if (!enrollment) return res.status(404).json({ error: "Enrollment not found" });
-
-    const ownerId = enrollment.user?.toString();
-    const isOwner = ownerId ? ownerId === req.user.id : enrollment.buyerEmail === req.user.email;
-    if (!isOwner && req.user.role !== "admin") {
-      return res.status(403).json({ error: "Not authorised" });
-    }
-
-    if (!enrollment.subscriptionId) {
-      return res.status(400).json({ error: "This enrollment is not a subscription" });
-    }
-
-    if (enrollment.subscriptionStatus !== "cancelled") {
-      return res.status(400).json({ error: "Subscription is not cancelled" });
-    }
-
-    // Try to reactivate in Stripe by removing cancel_at_period_end
-    let canReactivateDirectly = false;
-    try {
-      const stripeSub = await stripe.subscriptions.retrieve(enrollment.subscriptionId);
-      // Subscription still exists and isn't fully terminated
-      if (stripeSub.status !== "canceled") {
-        canReactivateDirectly = true;
-      }
-    } catch (stripeErr) {
-      if (stripeErr.code !== "resource_missing") throw stripeErr;
-      // Subscription gone from Stripe — fall through to checkout flow
-    }
-
-    if (canReactivateDirectly) {
-      const updatedSub = await stripe.subscriptions.update(enrollment.subscriptionId, {
-        cancel_at_period_end: false,
-      });
-
-      const periodEnd = resolveCurrentPeriodEnd(updatedSub);
-
-      await CourseEnrollment.findByIdAndUpdate(enrollmentId, {
-        subscriptionStatus: "active",
-        currentPeriodEnd: periodEnd,
-      });
-
-      return res.json({
-        message: "Subscription reactivated successfully.",
-        currentPeriodEnd: periodEnd,
-      });
-    }
-
-    // Stripe subscription is gone — create a new checkout session so the user
-    // can resubscribe. The existing enrollment will be updated on success.
-    const course = await Course.findById(enrollment.courseId);
-    if (!course) return res.status(404).json({ error: "Course not found" });
-
-    if (!course.stripePriceId) {
-      return res.status(500).json({
-        error: "This course is missing its Stripe price configuration. Please contact an admin.",
-      });
-    }
-    const priceId = course.stripePriceId;
-
-    const count = enrollment.participants?.length || 1;
-
-    // If the user still has time left on their current period, defer
-    // the first charge to when that period ends so they don't pay twice.
-    const subscriptionData = {};
-    if (enrollment.currentPeriodEnd && new Date(enrollment.currentPeriodEnd) > new Date()) {
-      subscriptionData.trial_end = Math.floor(
-        new Date(enrollment.currentPeriodEnd).getTime() / 1000
-      );
-    }
-
-    const session = await stripe.checkout.sessions.create({
-      customer_email: enrollment.buyerEmail,
-      line_items: [{ price: priceId, quantity: count }],
-      mode: "subscription",
-      ...(subscriptionData.trial_end && { subscription_data: subscriptionData }),
-      success_url: `${process.env.BACK_END_URL}courses/${course._id}/enrollment-success?session_id={CHECKOUT_SESSION_ID}&reactivate=${enrollmentId}`,
-      cancel_url: `${process.env.FRONT_END_URL}courses/${course._id}`,
-      metadata: {
-        courseId: course._id.toString(),
-        email: enrollment.buyerEmail,
-        count: count.toString(),
-        isSubscription: "true",
-        reactivateEnrollmentId: enrollmentId,
-      },
-    });
-
-    // Mark enrollment as pending reactivation
-    await CourseEnrollment.findByIdAndUpdate(enrollmentId, {
-      pendingSessionId: session.id,
-    });
-
-    return res.json({ url: session.url });
-  } catch (err) {
-    if (respondStripeOutage(res, err, "courseController.reactivateSubscription")) return;
-    logger.error(err, "Error reactivating subscription");
-    res.status(500).json({ error: "Failed to reactivate subscription" });
-  }
-};
+exports.reactivateSubscription = createReactivateSubscriptionHandler({
+  Model: CourseEnrollment,
+  idParam: "enrollmentId",
+  invalidIdError: "Invalid enrollment ID",
+  notFoundError: "Enrollment not found",
+  notSubscriptionError: "This enrollment is not a subscription",
+  getParent: (enrollment) => Course.findById(enrollment.courseId),
+  parentNotFoundError: "Course not found",
+  getPriceId: (course) => course.stripePriceId,
+  missingPriceError:
+    "This course is missing its Stripe price configuration. Please contact an admin.",
+  getQuantity: (enrollment) => enrollment.participants?.length || 1,
+  buildCheckoutParams: (enrollment, course, priceId, quantity, subscriptionData, enrollmentId) => ({
+    customer_email: enrollment.buyerEmail,
+    line_items: [{ price: priceId, quantity }],
+    mode: "subscription",
+    ...(subscriptionData.trial_end && { subscription_data: subscriptionData }),
+    success_url: `${process.env.BACK_END_URL}courses/${course._id}/enrollment-success?session_id={CHECKOUT_SESSION_ID}&reactivate=${enrollmentId}`,
+    cancel_url: `${process.env.FRONT_END_URL}courses/${course._id}`,
+    metadata: {
+      courseId: course._id.toString(),
+      email: enrollment.buyerEmail,
+      count: quantity.toString(),
+      isSubscription: "true",
+      reactivateEnrollmentId: enrollmentId,
+    },
+  }),
+  logContext: "courseController",
+});
 
 // ─── GET /courses/:courseId/my-enrollment ─────────────────────────────────────
 // Returns the current user's active enrollment for this course, if any.
@@ -1113,122 +983,11 @@ exports.updateEnrollment = async (req, res) => {
 // Must be registered in Stripe Dashboard → Webhooks.
 // Key events: invoice.payment_succeeded, customer.subscription.deleted
 // ─────────────────────────────────────────────────────────────────────────────
-exports.handleWebhook = async (req, res) => {
-  const sig = req.headers["stripe-signature"];
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_COURSE_WEBHOOK_SECRET);
-  } catch (err) {
-    logger.error(err, "Webhook signature error");
-    return res.status(400).json({ error: "Webhook signature verification failed" });
-  }
-
-  try {
-    // Idempotency — skip if this event was already processed
-    const alreadyProcessed = await WebhookEvent.findOne({ stripeEventId: event.id });
-    if (alreadyProcessed) {
-      return res.json({ received: true, duplicate: true });
-    }
-
-    const eventTimestamp = event.created;
-
-    switch (event.type) {
-      case "invoice.payment_succeeded": {
-        const invoice = event.data.object;
-        if (invoice.subscription) {
-          const sub = await stripe.subscriptions.retrieve(invoice.subscription);
-          // Only apply if this event is newer than the last one we processed
-          await CourseEnrollment.findOneAndUpdate(
-            {
-              subscriptionId: invoice.subscription,
-              $or: [
-                { lastStripeEventTimestamp: null },
-                { lastStripeEventTimestamp: { $lt: eventTimestamp } },
-              ],
-            },
-            {
-              $set: {
-                subscriptionStatus: "active",
-                currentPeriodEnd: resolveCurrentPeriodEnd(sub),
-                status: "active",
-                lastStripeEventTimestamp: eventTimestamp,
-              },
-              $inc: { totalAmountPaid: (invoice.amount_paid ?? 0) / 100 },
-            }
-          );
-        }
-        break;
-      }
-      case "invoice.payment_failed": {
-        const invoice = event.data.object;
-        if (invoice.subscription) {
-          await CourseEnrollment.findOneAndUpdate(
-            {
-              subscriptionId: invoice.subscription,
-              $or: [
-                { lastStripeEventTimestamp: null },
-                { lastStripeEventTimestamp: { $lt: eventTimestamp } },
-              ],
-            },
-            {
-              subscriptionStatus: "past_due",
-              status: "past_due",
-              lastStripeEventTimestamp: eventTimestamp,
-            }
-          );
-        }
-        break;
-      }
-      case "customer.subscription.deleted": {
-        const sub = event.data.object;
-
-        // Transaction: update enrollment status + decrement course count atomically
-        const mongoSession = await mongoose.startSession();
-        try {
-          await mongoSession.withTransaction(async () => {
-            const enrollment = await CourseEnrollment.findOneAndUpdate(
-              {
-                subscriptionId: sub.id,
-                status: { $ne: "cancelled" },
-                $or: [
-                  { lastStripeEventTimestamp: null },
-                  { lastStripeEventTimestamp: { $lt: eventTimestamp } },
-                ],
-              },
-              {
-                subscriptionStatus: "cancelled",
-                status: "cancelled",
-                lastStripeEventTimestamp: eventTimestamp,
-              },
-              { new: false, session: mongoSession }
-            );
-
-            if (enrollment) {
-              const count = enrollment.participants?.length || 1;
-              await Course.findByIdAndUpdate(
-                enrollment.courseId,
-                { $inc: { currentEnrollment: -count } },
-                { session: mongoSession }
-              );
-            }
-          });
-        } finally {
-          await mongoSession.endSession();
-        }
-        break;
-      }
-    }
-
-    // Record this event as processed
-    await WebhookEvent.create({
-      stripeEventId: event.id,
-      eventType: event.type,
-    });
-
-    res.json({ received: true });
-  } catch (err) {
-    logger.error(err, "Webhook handler error");
-    res.status(500).json({ error: "Webhook processing failed" });
-  }
-};
+exports.handleWebhook = createWebhookHandler({
+  Model: CourseEnrollment,
+  webhookSecretEnv: "STRIPE_COURSE_WEBHOOK_SECRET",
+  getParentIdField: (enrollment) => enrollment.courseId,
+  getDeletedCount: (enrollment) => enrollment.participants?.length || 1,
+  updateParentCounter: (courseId, count, session) =>
+    Course.findByIdAndUpdate(courseId, { $inc: { currentEnrollment: -count } }, { session }),
+});
