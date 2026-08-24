@@ -44,6 +44,58 @@ function calculateEndTime(startTime) {
   return `${String(endHours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
+function timeToMinutes(time) {
+  const [h, m] = time.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function rangesOverlap(aStart, aEnd, bStart, bEnd) {
+  return timeToMinutes(aStart) < timeToMinutes(bEnd) && timeToMinutes(bStart) < timeToMinutes(aEnd);
+}
+
+function byStartTime(a, b) {
+  return timeToMinutes(a.startTime) - timeToMinutes(b.startTime);
+}
+
+// Every entry in `sortedExisting` (which must already be sorted by start
+// time) that overlaps `slot` — empty if none. Stops as soon as an entry
+// starts at/after slot's end, since nothing sorted later can overlap it
+// either.
+function findOverlaps(slot, sortedExisting) {
+  const matches = [];
+  for (const existing of sortedExisting) {
+    if (timeToMinutes(existing.startTime) >= timeToMinutes(slot.endTime)) break;
+    if (rangesOverlap(slot.startTime, slot.endTime, existing.startTime, existing.endTime)) {
+      matches.push(existing);
+    }
+  }
+  return matches;
+}
+
+// Returns an array of { dayOfWeek, a, b } for every overlapping pair found in
+// a weeklySchedule array — empty if there's no overlap at all. Each day's
+// entries are sorted by start time first, so the inner loop can stop as soon
+// as it reaches an entry starting after the current one ends — everything
+// past that point is sorted later still, so none of it can overlap either.
+function findScheduleOverlaps(schedule) {
+  const byDay = {};
+  for (const entry of schedule) {
+    (byDay[entry.dayOfWeek] ||= []).push(entry);
+  }
+
+  const conflicts = [];
+  for (const dayOfWeek of Object.keys(byDay)) {
+    const entries = byDay[dayOfWeek].sort(byStartTime);
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        if (timeToMinutes(entries[j].startTime) >= timeToMinutes(entries[i].endTime)) break;
+        conflicts.push({ dayOfWeek, a: entries[i], b: entries[j] });
+      }
+    }
+  }
+  return conflicts;
+}
+
 // ==================== VENUE CRUD ====================
 
 exports.createVenue = async (req, res) => {
@@ -90,6 +142,19 @@ exports.updateVenue = async (req, res) => {
     if (!venue) return res.status(404).json({ error: "Venue not found" });
 
     const sanitized = sanitizeVenue(req.body);
+    if (sanitized.weeklySchedule) {
+      const conflicts = findScheduleOverlaps(sanitized.weeklySchedule);
+      if (conflicts.length > 0) {
+        const details = conflicts
+          .map(
+            (c) =>
+              `${c.dayOfWeek}: ${c.a.startTime}-${c.a.endTime} and ${c.b.startTime}-${c.b.endTime}`
+          )
+          .join("; ");
+        return res.status(400).json({ error: `Overlapping times found — ${details}` });
+      }
+    }
+
     Object.assign(venue, sanitized);
 
     if (req.file) {
@@ -148,6 +213,68 @@ exports.createVenueSlots = async (req, res) => {
       ];
     } else {
       return res.status(400).json({ error: "date + startTime, or slots array, is required" });
+    }
+
+    // Overlap check — against slots already in the DB for the affected dates,
+    // and against each other within this same request.
+    const times = slotsToCreate.map((s) => s.date.getTime());
+    const rangeStart = new Date(Math.min(...times));
+    rangeStart.setHours(0, 0, 0, 0);
+    const rangeEnd = new Date(Math.max(...times));
+    rangeEnd.setHours(23, 59, 59, 999);
+
+    const existingSlots = await VenueSlot.find({
+      venue: venueId,
+      date: { $gte: rangeStart, $lte: rangeEnd },
+    })
+      .select("date startTime endTime")
+      .lean();
+
+    const existingByDate = {};
+    for (const s of existingSlots) {
+      const key = s.date.toDateString();
+      (existingByDate[key] ||= []).push(s);
+    }
+    for (const key of Object.keys(existingByDate)) {
+      existingByDate[key].sort(byStartTime);
+    }
+
+    // Group the incoming batch by date, sorted by start time within each
+    // date, so both overlap checks below can stop as soon as they reach a
+    // slot starting after the current one ends — see findScheduleOverlaps.
+    const newByDate = {};
+    for (const s of slotsToCreate) {
+      (newByDate[s.date.toDateString()] ||= []).push(s);
+    }
+    for (const key of Object.keys(newByDate)) {
+      newByDate[key].sort(byStartTime);
+    }
+
+    const conflicts = [];
+
+    for (const key of Object.keys(newByDate)) {
+      const daySlots = newByDate[key];
+
+      for (const s of daySlots) {
+        for (const existing of findOverlaps(s, existingByDate[key] || [])) {
+          conflicts.push(
+            `${s.startTime}-${s.endTime} on ${key} overlaps an existing slot (${existing.startTime}-${existing.endTime})`
+          );
+        }
+      }
+
+      for (let i = 0; i < daySlots.length; i++) {
+        for (let j = i + 1; j < daySlots.length; j++) {
+          if (timeToMinutes(daySlots[j].startTime) >= timeToMinutes(daySlots[i].endTime)) break;
+          conflicts.push(
+            `${daySlots[i].startTime}-${daySlots[i].endTime} and ${daySlots[j].startTime}-${daySlots[j].endTime} on ${key} overlap each other`
+          );
+        }
+      }
+    }
+
+    if (conflicts.length > 0) {
+      return res.status(400).json({ error: `${conflicts.join("; ")}.` });
     }
 
     const createdSlots = await VenueSlot.insertMany(slotsToCreate);
