@@ -387,7 +387,7 @@ describe("Venue Controller", () => {
       expect(VenueSlot.insertMany).not.toHaveBeenCalled();
     });
 
-    it("should reject two slots in the same batch that overlap each other", async () => {
+    it("should reject a body missing date or startTime", async () => {
       const adminApp = express();
       adminApp.use(express.json());
       adminApp.use((req, res, next) => {
@@ -396,60 +396,12 @@ describe("Venue Controller", () => {
       });
       adminApp.post("/api/venues/:venueId/slots", venueController.createVenueSlots);
 
-      Venue.findById.mockResolvedValue({ _id: validVenueId, name: "Community Centre" });
-      VenueSlot.find.mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue([]),
-        }),
-      });
-
       const response = await request(adminApp)
         .post(`/api/venues/${validVenueId}/slots`)
-        .send({
-          slots: [
-            { date: "2026-05-15", startTime: "09:00", endTime: "13:00" },
-            { date: "2026-05-15", startTime: "12:00", endTime: "16:00" },
-          ],
-        });
+        .send({ date: "2026-05-15" });
 
       expect(response.status).toBe(400);
-      expect(response.body.error).toContain("overlap each other");
-      expect(VenueSlot.insertMany).not.toHaveBeenCalled();
-    });
-
-    it("should catch a wide slot overlapping two other non-adjacent slots in the same batch", async () => {
-      const adminApp = express();
-      adminApp.use(express.json());
-      adminApp.use((req, res, next) => {
-        req.user = { _id: adminUserId, id: adminUserId, role: "admin", email: "admin@test.com" };
-        next();
-      });
-      adminApp.post("/api/venues/:venueId/slots", venueController.createVenueSlots);
-
-      Venue.findById.mockResolvedValue({ _id: validVenueId, name: "Community Centre" });
-      VenueSlot.find.mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue([]),
-        }),
-      });
-
-      // A (09-17) contains both B (10-12) and C (13-15), but B and C don't
-      // overlap each other — proves the sort+early-break check doesn't stop
-      // after the first non-overlapping neighbour and miss the second pair.
-      const response = await request(adminApp)
-        .post(`/api/venues/${validVenueId}/slots`)
-        .send({
-          slots: [
-            { date: "2026-05-15", startTime: "09:00", endTime: "17:00" },
-            { date: "2026-05-15", startTime: "10:00", endTime: "12:00" },
-            { date: "2026-05-15", startTime: "13:00", endTime: "15:00" },
-          ],
-        });
-
-      expect(response.status).toBe(400);
-      expect(response.body.error).toContain("09:00-17:00 and 10:00-12:00");
-      expect(response.body.error).toContain("09:00-17:00 and 13:00-15:00");
-      expect(response.body.error).not.toContain("10:00-12:00 and 13:00-15:00");
+      expect(response.body.error).toContain("date and startTime are required");
       expect(VenueSlot.insertMany).not.toHaveBeenCalled();
     });
   });

@@ -185,109 +185,55 @@ exports.updateVenue = async (req, res) => {
 // ==================== SLOT OPERATIONS ====================
 
 /**
- * Create one or more manual slots for a specific date.
- * Body: { date, startTime } for a single slot
- *    or { slots: [{ date, startTime, endTime? }] } for bulk
+ * Create a manual slot for a specific date.
+ * Body: { date, startTime }
  */
 exports.createVenueSlots = async (req, res) => {
   try {
     const { venueId } = req.params;
-    const { date, startTime, slots } = req.body;
+    const { date, startTime } = req.body;
+
+    if (!date || !startTime) {
+      return res.status(400).json({ error: "date and startTime are required" });
+    }
 
     const venue = await Venue.findById(venueId);
     if (!venue) return res.status(404).json({ error: "Venue not found" });
 
-    let slotsToCreate;
+    const newSlot = {
+      venue: venueId,
+      date: new Date(date),
+      startTime,
+      endTime: calculateEndTime(startTime),
+      isAvailable: true,
+      source: "manual",
+      createdBy: req.user.id,
+    };
 
-    if (slots && Array.isArray(slots)) {
-      slotsToCreate = slots.map((s) => ({
-        venue: venueId,
-        date: new Date(s.date),
-        startTime: s.startTime,
-        endTime: s.endTime || calculateEndTime(s.startTime),
-        isAvailable: true,
-        source: "manual",
-        createdBy: req.user.id,
-      }));
-    } else if (date && startTime) {
-      slotsToCreate = [
-        {
-          venue: venueId,
-          date: new Date(date),
-          startTime,
-          endTime: calculateEndTime(startTime),
-          isAvailable: true,
-          source: "manual",
-          createdBy: req.user.id,
-        },
-      ];
-    } else {
-      return res.status(400).json({ error: "date + startTime, or slots array, is required" });
-    }
-
-    // Overlap check — against slots already in the DB for the affected dates,
-    // and against each other within this same request.
-    const times = slotsToCreate.map((s) => s.date.getTime());
-    const rangeStart = new Date(Math.min(...times));
-    rangeStart.setHours(0, 0, 0, 0);
-    const rangeEnd = new Date(Math.max(...times));
-    rangeEnd.setHours(23, 59, 59, 999);
+    const dayStart = new Date(newSlot.date);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(newSlot.date);
+    dayEnd.setHours(23, 59, 59, 999);
 
     const existingSlots = await VenueSlot.find({
       venue: venueId,
-      date: { $gte: rangeStart, $lte: rangeEnd },
+      date: { $gte: dayStart, $lte: dayEnd },
     })
       .select("date startTime endTime")
       .lean();
+    existingSlots.sort(byStartTime);
 
-    const existingByDate = {};
-    for (const s of existingSlots) {
-      const key = s.date.toDateString();
-      (existingByDate[key] ||= []).push(s);
-    }
-    for (const key of Object.keys(existingByDate)) {
-      existingByDate[key].sort(byStartTime);
-    }
-
-    // Group the incoming batch by date, sorted by start time within each
-    // date, so both overlap checks below can stop as soon as they reach a
-    // slot starting after the current one ends — see findScheduleOverlaps.
-    const newByDate = {};
-    for (const s of slotsToCreate) {
-      (newByDate[s.date.toDateString()] ||= []).push(s);
-    }
-    for (const key of Object.keys(newByDate)) {
-      newByDate[key].sort(byStartTime);
-    }
-
-    const conflicts = [];
-
-    for (const key of Object.keys(newByDate)) {
-      const daySlots = newByDate[key];
-
-      for (const s of daySlots) {
-        for (const existing of findOverlaps(s, existingByDate[key] || [])) {
-          conflicts.push(
-            `${s.startTime}-${s.endTime} on ${key} overlaps an existing slot (${existing.startTime}-${existing.endTime})`
-          );
-        }
-      }
-
-      for (let i = 0; i < daySlots.length; i++) {
-        for (let j = i + 1; j < daySlots.length; j++) {
-          if (timeToMinutes(daySlots[j].startTime) >= timeToMinutes(daySlots[i].endTime)) break;
-          conflicts.push(
-            `${daySlots[i].startTime}-${daySlots[i].endTime} and ${daySlots[j].startTime}-${daySlots[j].endTime} on ${key} overlap each other`
-          );
-        }
-      }
-    }
+    const dateKey = newSlot.date.toDateString();
+    const conflicts = findOverlaps(newSlot, existingSlots).map(
+      (existing) =>
+        `${newSlot.startTime}-${newSlot.endTime} on ${dateKey} overlaps an existing slot (${existing.startTime}-${existing.endTime})`
+    );
 
     if (conflicts.length > 0) {
       return res.status(400).json({ error: `${conflicts.join("; ")}.` });
     }
 
-    const createdSlots = await VenueSlot.insertMany(slotsToCreate);
+    const createdSlots = await VenueSlot.insertMany([newSlot]);
     res
       .status(201)
       .json({ message: `${createdSlots.length} slot(s) created`, slots: createdSlots });
