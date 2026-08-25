@@ -1,6 +1,7 @@
 node_modules/
 uploads/
 .env*
+!.env.example
 .DS_Store
 CLAUDE.md
 .vercel
