@@ -5,7 +5,10 @@ const ticketSchema = new mongoose.Schema(
   {
     eventId: { type: mongoose.Schema.Types.ObjectId, ref: "Event" },
     buyerEmail: { type: String },
-    status: { type: String, enum: ["pending", "paid", "failed", "canceled"], default: "pending" },
+    // No default — a ticket must never come into existence except by a call
+    // site explicitly asserting payment succeeded (checkout success handler
+    // or staff manual issuance). Omitting it is a bug and should fail loudly.
+    status: { type: String, enum: ["paid"], required: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     paymentId: { type: String }, // Stripe session ID — used for grouping bulk purchase tickets
     totalAmountPaid: { type: Number, default: 0 }, // this ticket's share of the purchase

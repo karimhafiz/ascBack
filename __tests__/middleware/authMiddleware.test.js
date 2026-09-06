@@ -20,13 +20,13 @@ describe("authMiddleware middleware", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("should return 403 if token is invalid", () => {
+  it("should return 401 if token is invalid", () => {
     req.headers["authorization"] = "Bearer invalidtoken";
     jest.spyOn(jwt, "verify").mockImplementation(() => {
       throw new Error("Invalid token");
     });
     authMiddleware(req, res, next);
-    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith({ message: "Invalid token" });
     expect(next).not.toHaveBeenCalled();
     jwt.verify.mockRestore();

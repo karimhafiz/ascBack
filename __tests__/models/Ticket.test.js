@@ -17,12 +17,13 @@ describe("Ticket Model", () => {
     expect(error).toBeUndefined();
   });
 
-  it("should default status to pending", () => {
+  it("should require status to be set explicitly, with no default", () => {
     const ticket = new Ticket({
       eventId: new mongoose.Types.ObjectId(),
       buyerEmail: "buyer@test.com",
     });
-    expect(ticket.status).toBe("pending");
+    const error = ticket.validateSync();
+    expect(error.errors.status).toBeDefined();
   });
 
   it("should default checkedIn to false", () => {

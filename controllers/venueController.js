@@ -10,6 +10,7 @@ const {
 } = require("../utils/emailUtils");
 const { generateUniqueCode } = require("../utils/ticketUtils");
 const { respondStripeOutage } = require("../utils/stripeErrorUtils");
+const { deleteCloudinaryImage } = require("../utils/cloudinaryUtils");
 const logger = require("../utils/logger");
 
 const DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
@@ -43,12 +44,66 @@ function calculateEndTime(startTime) {
   return `${String(endHours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
+function timeToMinutes(time) {
+  const [h, m] = time.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function rangesOverlap(aStart, aEnd, bStart, bEnd) {
+  return timeToMinutes(aStart) < timeToMinutes(bEnd) && timeToMinutes(bStart) < timeToMinutes(aEnd);
+}
+
+function byStartTime(a, b) {
+  return timeToMinutes(a.startTime) - timeToMinutes(b.startTime);
+}
+
+// Every entry in `sortedExisting` (which must already be sorted by start
+// time) that overlaps `slot` — empty if none. Stops as soon as an entry
+// starts at/after slot's end, since nothing sorted later can overlap it
+// either.
+function findOverlaps(slot, sortedExisting) {
+  const matches = [];
+  for (const existing of sortedExisting) {
+    if (timeToMinutes(existing.startTime) >= timeToMinutes(slot.endTime)) break;
+    if (rangesOverlap(slot.startTime, slot.endTime, existing.startTime, existing.endTime)) {
+      matches.push(existing);
+    }
+  }
+  return matches;
+}
+
+// Returns an array of { dayOfWeek, a, b } for every overlapping pair found in
+// a weeklySchedule array — empty if there's no overlap at all. Each day's
+// entries are sorted by start time first, so the inner loop can stop as soon
+// as it reaches an entry starting after the current one ends — everything
+// past that point is sorted later still, so none of it can overlap either.
+function findScheduleOverlaps(schedule) {
+  const byDay = {};
+  for (const entry of schedule) {
+    (byDay[entry.dayOfWeek] ||= []).push(entry);
+  }
+
+  const conflicts = [];
+  for (const dayOfWeek of Object.keys(byDay)) {
+    const entries = byDay[dayOfWeek].sort(byStartTime);
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        if (timeToMinutes(entries[j].startTime) >= timeToMinutes(entries[i].endTime)) break;
+        conflicts.push({ dayOfWeek, a: entries[i], b: entries[j] });
+      }
+    }
+  }
+  return conflicts;
+}
+
 // ==================== VENUE CRUD ====================
 
 exports.createVenue = async (req, res) => {
   try {
     const sanitized = sanitizeVenue(req.body);
     sanitized.managedBy = req.user.id;
+    const imageUrl = req.file ? req.file.secure_url || req.file.path : null;
+    if (imageUrl) sanitized.images = [imageUrl];
     const venue = new Venue(sanitized);
     await venue.save();
     res.status(201).json({ message: "Venue created successfully", venue });
@@ -74,6 +129,16 @@ exports.getVenue = async (req, res) => {
   try {
     const venue = await Venue.findById(req.params.venueId).populate("managedBy", "name email");
     if (!venue) return res.status(404).json({ error: "Venue not found" });
+
+    // How far ahead this venue's bookable slots currently reach — surfaced so
+    // admins/moderators can see at a glance whether it's time to generate
+    // more (slot generation is manual by design, see generateScheduleSlots).
+    const latestSlot = await VenueSlot.findOne({ venue: venue._id })
+      .sort({ date: -1 })
+      .select("date")
+      .lean();
+    venue.slotHorizon = latestSlot ? latestSlot.date : null;
+
     res.json(venue);
   } catch (error) {
     logger.error(error, "Error fetching venue");
@@ -85,7 +150,30 @@ exports.updateVenue = async (req, res) => {
   try {
     const venue = await Venue.findById(req.params.venueId);
     if (!venue) return res.status(404).json({ error: "Venue not found" });
-    Object.assign(venue, sanitizeVenue(req.body));
+
+    const sanitized = sanitizeVenue(req.body);
+    if (sanitized.weeklySchedule) {
+      const conflicts = findScheduleOverlaps(sanitized.weeklySchedule);
+      if (conflicts.length > 0) {
+        const details = conflicts
+          .map(
+            (c) =>
+              `${c.dayOfWeek}: ${c.a.startTime}-${c.a.endTime} and ${c.b.startTime}-${c.b.endTime}`
+          )
+          .join("; ");
+        return res.status(400).json({ error: `Overlapping times found — ${details}` });
+      }
+    }
+
+    Object.assign(venue, sanitized);
+
+    if (req.file) {
+      if (venue.images && venue.images.length > 0) {
+        await deleteCloudinaryImage(venue.images[0], "venue-images");
+      }
+      venue.images = [req.file.secure_url || req.file.path];
+    }
+
     await venue.save();
     res.json({ message: "Venue updated successfully", venue });
   } catch (error) {
@@ -97,47 +185,55 @@ exports.updateVenue = async (req, res) => {
 // ==================== SLOT OPERATIONS ====================
 
 /**
- * Create one or more manual slots for a specific date.
- * Body: { date, startTime } for a single slot
- *    or { slots: [{ date, startTime, endTime? }] } for bulk
+ * Create a manual slot for a specific date.
+ * Body: { date, startTime }
  */
 exports.createVenueSlots = async (req, res) => {
   try {
     const { venueId } = req.params;
-    const { date, startTime, slots } = req.body;
+    const { date, startTime } = req.body;
+
+    if (!date || !startTime) {
+      return res.status(400).json({ error: "date and startTime are required" });
+    }
 
     const venue = await Venue.findById(venueId);
     if (!venue) return res.status(404).json({ error: "Venue not found" });
 
-    let slotsToCreate;
+    const newSlot = {
+      venue: venueId,
+      date: new Date(date),
+      startTime,
+      endTime: calculateEndTime(startTime),
+      isAvailable: true,
+      source: "manual",
+      createdBy: req.user.id,
+    };
 
-    if (slots && Array.isArray(slots)) {
-      slotsToCreate = slots.map((s) => ({
-        venue: venueId,
-        date: new Date(s.date),
-        startTime: s.startTime,
-        endTime: s.endTime || calculateEndTime(s.startTime),
-        isAvailable: true,
-        source: "manual",
-        createdBy: req.user.id,
-      }));
-    } else if (date && startTime) {
-      slotsToCreate = [
-        {
-          venue: venueId,
-          date: new Date(date),
-          startTime,
-          endTime: calculateEndTime(startTime),
-          isAvailable: true,
-          source: "manual",
-          createdBy: req.user.id,
-        },
-      ];
-    } else {
-      return res.status(400).json({ error: "date + startTime, or slots array, is required" });
+    const dayStart = new Date(newSlot.date);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(newSlot.date);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    const existingSlots = await VenueSlot.find({
+      venue: venueId,
+      date: { $gte: dayStart, $lte: dayEnd },
+    })
+      .select("date startTime endTime")
+      .lean();
+    existingSlots.sort(byStartTime);
+
+    const dateKey = newSlot.date.toDateString();
+    const conflicts = findOverlaps(newSlot, existingSlots).map(
+      (existing) =>
+        `${newSlot.startTime}-${newSlot.endTime} on ${dateKey} overlaps an existing slot (${existing.startTime}-${existing.endTime})`
+    );
+
+    if (conflicts.length > 0) {
+      return res.status(400).json({ error: `${conflicts.join("; ")}.` });
     }
 
-    const createdSlots = await VenueSlot.insertMany(slotsToCreate);
+    const createdSlots = await VenueSlot.insertMany([newSlot]);
     res
       .status(201)
       .json({ message: `${createdSlots.length} slot(s) created`, slots: createdSlots });
@@ -188,7 +284,7 @@ exports.generateScheduleSlots = async (req, res) => {
       dayMap[entry.dayOfWeek].push({ startTime: entry.startTime, endTime: entry.endTime });
     }
 
-    const slotsToCreate = [];
+    const candidates = [];
     const cursor = new Date(start);
 
     while (cursor <= end) {
@@ -196,7 +292,7 @@ exports.generateScheduleSlots = async (req, res) => {
       const entries = dayMap[dayName];
       if (entries) {
         for (const { startTime, endTime } of entries) {
-          slotsToCreate.push({
+          candidates.push({
             venue: venueId,
             date: new Date(cursor),
             startTime,
@@ -210,18 +306,59 @@ exports.generateScheduleSlots = async (req, res) => {
       cursor.setDate(cursor.getDate() + 1);
     }
 
-    if (slotsToCreate.length === 0) {
+    if (candidates.length === 0) {
       return res.status(400).json({ error: "No matching days found in the date range" });
+    }
+
+    // Filter out any candidate that overlaps a slot already in the DB —
+    // insertMany's duplicate-key skip below only catches an *exact* same
+    // start time, not a genuine overlap at a different one (e.g. a manually
+    // added slot, or a leftover from a template that's since changed).
+    const existingSlots = await VenueSlot.find({
+      venue: venueId,
+      date: { $gte: start, $lte: end },
+    })
+      .select("date startTime endTime")
+      .lean();
+
+    const existingByDate = {};
+    for (const s of existingSlots) {
+      (existingByDate[s.date.toDateString()] ||= []).push(s);
+    }
+    for (const key of Object.keys(existingByDate)) {
+      existingByDate[key].sort(byStartTime);
+    }
+
+    const slotsToCreate = [];
+    let skippedForOverlap = 0;
+    for (const candidate of candidates) {
+      const existingOnDate = existingByDate[candidate.date.toDateString()] || [];
+      if (findOverlaps(candidate, existingOnDate).length > 0) {
+        skippedForOverlap++;
+      } else {
+        slotsToCreate.push(candidate);
+      }
+    }
+
+    if (slotsToCreate.length === 0) {
+      return res.status(400).json({
+        error: `All ${skippedForOverlap} matching slot(s) in this range are already occupied — nothing generated.`,
+      });
     }
 
     try {
       const result = await VenueSlot.insertMany(slotsToCreate, { ordered: false });
-      res.status(201).json({ message: `${result.length} slot(s) generated`, slots: result });
+      const occupiedNote =
+        skippedForOverlap > 0 ? ` (${skippedForOverlap} skipped — already occupied)` : "";
+      res
+        .status(201)
+        .json({ message: `${result.length} slot(s) generated${occupiedNote}`, slots: result });
     } catch (error) {
       if (error.code === 11000 || error.name === "MongoBulkWriteError") {
         const inserted = error.insertedDocs ?? [];
+        const occupiedNote = skippedForOverlap > 0 ? `, ${skippedForOverlap} already occupied` : "";
         return res.status(201).json({
-          message: `${inserted.length} slot(s) generated (some already existed and were skipped)`,
+          message: `${inserted.length} slot(s) generated (some already existed${occupiedNote} and were skipped)`,
           slots: inserted,
         });
       }

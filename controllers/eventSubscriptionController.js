@@ -2,32 +2,18 @@ const mongoose = require("mongoose");
 const Event = require("../models/Event");
 const EventSubscription = require("../models/EventSubscription");
 const User = require("../models/User");
-const WebhookEvent = require("../models/WebhookEvent");
 const {
   sendEventSubscriptionEmail,
   sendEventSubscriptionCancellationEmail,
 } = require("../utils/emailUtils");
-const { respondStripeOutage } = require("../utils/stripeErrorUtils");
 const logger = require("../utils/logger");
+const {
+  resolveCurrentPeriodEnd,
+  createCancelSubscriptionHandler,
+  createReactivateSubscriptionHandler,
+  createWebhookHandler,
+} = require("../utils/subscriptionLifecycle");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-
-// Stripe moved current_period_end from subscription to subscription item
-function getSubPeriodEnd(sub) {
-  return sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
-}
-
-function resolveCurrentPeriodEnd(sub, fallbackInterval = "month") {
-  const periodTs = getSubPeriodEnd(sub);
-  if (periodTs) return new Date(periodTs * 1000);
-  logger.warn(
-    { subscriptionId: sub.id },
-    "Missing current_period_end for subscription, using fallback"
-  );
-  const now = new Date();
-  if (fallbackInterval === "week") now.setDate(now.getDate() + 7);
-  else now.setMonth(now.getMonth() + 1);
-  return now;
-}
 
 // ─── GET /events/:eventId/subscription-success ────────────────────────────────
 // Stripe redirects here after subscription checkout.
@@ -226,282 +212,69 @@ exports.getMySubscription = async (req, res) => {
 // ─── POST /events/subscriptions/:subscriptionId/cancel ────────────────────────
 // User cancels their subscription — cancels at period end in Stripe.
 // ─────────────────────────────────────────────────────────────────────────────
-exports.cancelSubscription = async (req, res) => {
-  try {
-    const { subscriptionId } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(subscriptionId)) {
-      return res.status(400).json({ error: "Invalid subscription ID" });
-    }
-
-    const subscription = await EventSubscription.findById(subscriptionId);
-    if (!subscription) return res.status(404).json({ error: "Subscription not found" });
-
-    const ownerId = subscription.user?.toString();
-    const isOwner = ownerId ? ownerId === req.user.id : subscription.buyerEmail === req.user.email;
-    if (!isOwner && req.user.role !== "admin") {
-      return res.status(403).json({ error: "Not authorised" });
-    }
-
-    if (!subscription.subscriptionId) {
-      return res.status(400).json({ error: "This is not a subscription" });
-    }
-
-    if (subscription.subscriptionStatus === "cancelled") {
-      return res.status(400).json({ error: "Subscription is already cancelled" });
-    }
-
-    const updatedSub = await stripe.subscriptions.update(subscription.subscriptionId, {
-      cancel_at_period_end: true,
-    });
-
-    const periodEnd = resolveCurrentPeriodEnd(updatedSub);
-
-    await EventSubscription.findByIdAndUpdate(subscriptionId, {
-      subscriptionStatus: "cancelled",
+exports.cancelSubscription = createCancelSubscriptionHandler({
+  Model: EventSubscription,
+  idParam: "subscriptionId",
+  invalidIdError: "Invalid subscription ID",
+  notFoundError: "Subscription not found",
+  notSubscriptionError: "This is not a subscription",
+  getParent: (subscription) => Event.findById(subscription.eventId),
+  sendCancellationEmail: (subscription, event, periodEnd) =>
+    sendEventSubscriptionCancellationEmail({
+      buyerEmail: subscription.buyerEmail,
+      event,
       currentPeriodEnd: periodEnd,
-    });
-
-    const event = await Event.findById(subscription.eventId);
-    if (event) {
-      sendEventSubscriptionCancellationEmail({
-        buyerEmail: subscription.buyerEmail,
-        event,
-        currentPeriodEnd: periodEnd,
-      }).catch((err) => logger.error(err, "Failed to send cancellation email"));
-    }
-
-    res.json({
-      message:
-        "Subscription cancelled. You will retain access until the end of your current billing period.",
-      currentPeriodEnd: periodEnd,
-    });
-  } catch (err) {
-    if (respondStripeOutage(res, err, "eventSubscriptionController.cancelSubscription")) return;
-    logger.error(err, "Error cancelling subscription");
-    res.status(500).json({ error: "Failed to cancel subscription" });
-  }
-};
+    }),
+  logContext: "eventSubscriptionController",
+});
 
 // ─── POST /events/subscriptions/:subscriptionId/reactivate ────────────────────
 // User reactivates a cancelled subscription.
 // ─────────────────────────────────────────────────────────────────────────────
-exports.reactivateSubscription = async (req, res) => {
-  try {
-    const { subscriptionId } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(subscriptionId)) {
-      return res.status(400).json({ error: "Invalid subscription ID" });
-    }
-
-    const subscription = await EventSubscription.findById(subscriptionId);
-    if (!subscription) return res.status(404).json({ error: "Subscription not found" });
-
-    const ownerId = subscription.user?.toString();
-    const isOwner = ownerId ? ownerId === req.user.id : subscription.buyerEmail === req.user.email;
-    if (!isOwner && req.user.role !== "admin") {
-      return res.status(403).json({ error: "Not authorised" });
-    }
-
-    if (!subscription.subscriptionId) {
-      return res.status(400).json({ error: "This is not a subscription" });
-    }
-
-    if (subscription.subscriptionStatus !== "cancelled") {
-      return res.status(400).json({ error: "Subscription is not cancelled" });
-    }
-
-    // Try to reactivate in Stripe by removing cancel_at_period_end
-    let canReactivateDirectly = false;
-    try {
-      const stripeSub = await stripe.subscriptions.retrieve(subscription.subscriptionId);
-      if (stripeSub.status !== "canceled") {
-        canReactivateDirectly = true;
-      }
-    } catch (stripeErr) {
-      if (stripeErr.code !== "resource_missing") throw stripeErr;
-    }
-
-    if (canReactivateDirectly) {
-      const updatedSub = await stripe.subscriptions.update(subscription.subscriptionId, {
-        cancel_at_period_end: false,
-      });
-
-      const periodEnd = resolveCurrentPeriodEnd(updatedSub);
-
-      await EventSubscription.findByIdAndUpdate(subscriptionId, {
-        subscriptionStatus: "active",
-        currentPeriodEnd: periodEnd,
-      });
-
-      return res.json({
-        message: "Subscription reactivated successfully.",
-        currentPeriodEnd: periodEnd,
-      });
-    }
-
-    // Stripe subscription is gone — create a new checkout session
-    const event = await Event.findById(subscription.eventId);
-    if (!event) return res.status(404).json({ error: "Event not found" });
-
-    if (!event.stripePriceId) {
-      return res.status(500).json({
-        error: "This event is missing its Stripe price configuration. Please contact an admin.",
-      });
-    }
-
-    const subscriptionData = {};
-    if (subscription.currentPeriodEnd && new Date(subscription.currentPeriodEnd) > new Date()) {
-      subscriptionData.trial_end = Math.floor(
-        new Date(subscription.currentPeriodEnd).getTime() / 1000
-      );
-    }
-
-    const session = await stripe.checkout.sessions.create({
-      customer_email: subscription.buyerEmail,
-      line_items: [{ price: event.stripePriceId, quantity: subscription.quantity || 1 }],
-      mode: "subscription",
-      ...(subscriptionData.trial_end && { subscription_data: subscriptionData }),
-      success_url: `${process.env.BACK_END_URL}events/${event._id}/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONT_END_URL}events/${event._id}`,
-      metadata: {
-        eventId: event._id.toString(),
-        email: subscription.buyerEmail,
-        quantity: (subscription.quantity || 1).toString(),
-        reactivateSubscriptionId: subscriptionId,
-      },
-    });
-
-    await EventSubscription.findByIdAndUpdate(subscriptionId, {
-      pendingSessionId: session.id,
-    });
-
-    return res.json({ url: session.url });
-  } catch (err) {
-    if (respondStripeOutage(res, err, "eventSubscriptionController.reactivateSubscription")) return;
-    logger.error(err, "Error reactivating subscription");
-    res.status(500).json({ error: "Failed to reactivate subscription" });
-  }
-};
+exports.reactivateSubscription = createReactivateSubscriptionHandler({
+  Model: EventSubscription,
+  idParam: "subscriptionId",
+  invalidIdError: "Invalid subscription ID",
+  notFoundError: "Subscription not found",
+  notSubscriptionError: "This is not a subscription",
+  getParent: (subscription) => Event.findById(subscription.eventId),
+  parentNotFoundError: "Event not found",
+  getPriceId: (event) => event.stripePriceId,
+  missingPriceError:
+    "This event is missing its Stripe price configuration. Please contact an admin.",
+  getQuantity: (subscription) => subscription.quantity || 1,
+  buildCheckoutParams: (
+    subscription,
+    event,
+    priceId,
+    quantity,
+    subscriptionData,
+    subscriptionId
+  ) => ({
+    customer_email: subscription.buyerEmail,
+    line_items: [{ price: priceId, quantity }],
+    mode: "subscription",
+    ...(subscriptionData.trial_end && { subscription_data: subscriptionData }),
+    success_url: `${process.env.BACK_END_URL}events/${event._id}/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${process.env.FRONT_END_URL}events/${event._id}`,
+    metadata: {
+      eventId: event._id.toString(),
+      email: subscription.buyerEmail,
+      quantity: quantity.toString(),
+      reactivateSubscriptionId: subscriptionId,
+    },
+  }),
+  logContext: "eventSubscriptionController",
+});
 
 // ─── POST /events/subscriptions/webhook ───────────────────────────────────────
 // Stripe sends events here for event subscription lifecycle.
 // ─────────────────────────────────────────────────────────────────────────────
-exports.handleWebhook = async (req, res) => {
-  const sig = req.headers["stripe-signature"];
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(
-      req.body,
-      sig,
-      process.env.STRIPE_EVENT_SUBSCRIPTION_WEBHOOK_SECRET
-    );
-  } catch (err) {
-    logger.error(err, "Webhook signature error");
-    return res.status(400).json({ error: "Webhook signature verification failed" });
-  }
-
-  try {
-    // Idempotency — skip if this event was already processed
-    const alreadyProcessed = await WebhookEvent.findOne({ stripeEventId: event.id });
-    if (alreadyProcessed) {
-      return res.json({ received: true, duplicate: true });
-    }
-
-    const eventTimestamp = event.created;
-
-    switch (event.type) {
-      case "invoice.payment_succeeded": {
-        const invoice = event.data.object;
-        if (invoice.subscription) {
-          const sub = await stripe.subscriptions.retrieve(invoice.subscription);
-          await EventSubscription.findOneAndUpdate(
-            {
-              subscriptionId: invoice.subscription,
-              $or: [
-                { lastStripeEventTimestamp: null },
-                { lastStripeEventTimestamp: { $lt: eventTimestamp } },
-              ],
-            },
-            {
-              $set: {
-                subscriptionStatus: "active",
-                currentPeriodEnd: resolveCurrentPeriodEnd(sub),
-                status: "active",
-                lastStripeEventTimestamp: eventTimestamp,
-              },
-              $inc: { totalAmountPaid: (invoice.amount_paid ?? 0) / 100 },
-            }
-          );
-        }
-        break;
-      }
-      case "invoice.payment_failed": {
-        const invoice = event.data.object;
-        if (invoice.subscription) {
-          await EventSubscription.findOneAndUpdate(
-            {
-              subscriptionId: invoice.subscription,
-              $or: [
-                { lastStripeEventTimestamp: null },
-                { lastStripeEventTimestamp: { $lt: eventTimestamp } },
-              ],
-            },
-            {
-              subscriptionStatus: "past_due",
-              status: "past_due",
-              lastStripeEventTimestamp: eventTimestamp,
-            }
-          );
-        }
-        break;
-      }
-      case "customer.subscription.deleted": {
-        const sub = event.data.object;
-
-        const mongoSession = await mongoose.startSession();
-        try {
-          await mongoSession.withTransaction(async () => {
-            const subscription = await EventSubscription.findOneAndUpdate(
-              {
-                subscriptionId: sub.id,
-                status: { $ne: "cancelled" },
-                $or: [
-                  { lastStripeEventTimestamp: null },
-                  { lastStripeEventTimestamp: { $lt: eventTimestamp } },
-                ],
-              },
-              {
-                subscriptionStatus: "cancelled",
-                status: "cancelled",
-                lastStripeEventTimestamp: eventTimestamp,
-              },
-              { new: false, session: mongoSession }
-            );
-
-            if (subscription) {
-              await Event.findByIdAndUpdate(
-                subscription.eventId,
-                { $inc: { currentSubscribers: -1 } },
-                { session: mongoSession }
-              );
-            }
-          });
-        } finally {
-          await mongoSession.endSession();
-        }
-        break;
-      }
-    }
-
-    // Record this event as processed
-    await WebhookEvent.create({
-      stripeEventId: event.id,
-      eventType: event.type,
-    });
-
-    res.json({ received: true });
-  } catch (err) {
-    logger.error(err, "Webhook handler error");
-    res.status(500).json({ error: "Webhook processing failed" });
-  }
-};
+exports.handleWebhook = createWebhookHandler({
+  Model: EventSubscription,
+  webhookSecretEnv: "STRIPE_EVENT_SUBSCRIPTION_WEBHOOK_SECRET",
+  getParentIdField: (subscription) => subscription.eventId,
+  getDeletedCount: () => 1,
+  updateParentCounter: (eventId, count, session) =>
+    Event.findByIdAndUpdate(eventId, { $inc: { currentSubscribers: -count } }, { session }),
+});

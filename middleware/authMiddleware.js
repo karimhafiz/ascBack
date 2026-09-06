@@ -15,7 +15,7 @@ function authMiddleware(req, res, next) {
     next();
   } catch (err) {
     logger.warn({ err: err.message }, "JWT verification failed");
-    return res.status(403).json({ message: "Invalid token" });
+    return res.status(401).json({ message: "Invalid token" });
   }
 }
 

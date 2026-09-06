@@ -120,25 +120,20 @@ describe("Ticket Routes — Integration", () => {
 
   describe("GET /api/tickets", () => {
     it("should return aggregated ticket data", async () => {
-      Ticket.aggregate.mockResolvedValue([
-        { title: "Football", ticketsSold: 2, ticketsCanceled: 1, totalRevenue: 20 },
-      ]);
+      Ticket.aggregate.mockResolvedValue([{ title: "Football", ticketsSold: 2, totalRevenue: 20 }]);
 
       const res = await request(app).get("/api/tickets");
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveLength(1);
       expect(res.body[0].ticketsSold).toBe(2);
-      expect(res.body[0].ticketsCanceled).toBe(1);
       expect(res.body[0].totalRevenue).toBe(20);
     });
 
     it("should skip tickets with no event populated", async () => {
       // The aggregation pipeline uses $unwind which drops tickets with no
       // matching event, so orphaned tickets never appear in results.
-      Ticket.aggregate.mockResolvedValue([
-        { title: "Football", ticketsSold: 1, ticketsCanceled: 0, totalRevenue: 5 },
-      ]);
+      Ticket.aggregate.mockResolvedValue([{ title: "Football", ticketsSold: 1, totalRevenue: 5 }]);
 
       const res = await request(app).get("/api/tickets");
 

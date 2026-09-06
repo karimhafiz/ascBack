@@ -140,8 +140,7 @@ describe("Payment Routes — Integration", () => {
             email: "buyer@test.com",
             quantity: "2",
           }),
-        }),
-        expect.objectContaining({ idempotencyKey: expect.any(String) })
+        })
       );
     });
 
@@ -237,8 +236,7 @@ describe("Payment Routes — Integration", () => {
           mode: "subscription",
           line_items: [{ price: "price_recurring_123", quantity: 1 }],
           success_url: expect.stringContaining("subscription-success"),
-        }),
-        expect.objectContaining({ idempotencyKey: expect.any(String) })
+        })
       );
 
       // Verify pending EventSubscription was created
@@ -292,8 +290,7 @@ describe("Payment Routes — Integration", () => {
 
       expect(res.status).toBe(200);
       expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
-        expect.objectContaining({ mode: "payment" }),
-        expect.objectContaining({ idempotencyKey: expect.any(String) })
+        expect.objectContaining({ mode: "payment" })
       );
     });
   });

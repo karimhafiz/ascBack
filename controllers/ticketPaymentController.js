@@ -42,11 +42,6 @@ const buildCheckoutSession = async ({ email, eventId, rawQuantity, res }) => {
       return res.status(400).json({ error: "Not enough tickets available" });
     }
 
-    // Idempotency key prevents duplicate checkout sessions from double-clicks.
-    // 10-second bucket means rapid retries within 10s return the same session.
-    const timeBucket = Math.floor(Date.now() / 10000);
-    const idempotencyKey = `ticket-${eventId}-${email}-${quantity}-${timeBucket}`;
-
     const isSubscription = event.isReoccurring && event.stripePriceId;
 
     let sessionConfig;
@@ -102,7 +97,7 @@ const buildCheckoutSession = async ({ email, eventId, rawQuantity, res }) => {
       };
     }
 
-    const session = await stripe.checkout.sessions.create(sessionConfig, { idempotencyKey });
+    const session = await stripe.checkout.sessions.create(sessionConfig);
 
     // Create a pending EventSubscription record for subscription checkouts
     if (isSubscription) {
@@ -285,6 +280,7 @@ exports.handleSuccess = async (req, res) => {
       `${process.env.FRONT_END_URL}order-confirmation?session_id=${session_id}&ticket_id=${ticketIds[0]}`
     );
   } catch (err) {
+    if (respondStripeOutage(res, err, "ticketPaymentController.handleSuccess")) return;
     logger.error(err, "Payment for ticket failed");
     res.status(500).json({ error: "Failed to process payment confirmation" });
   }
@@ -315,6 +311,7 @@ exports.getGuestOrder = async (req, res) => {
       quantity: parseInt(session.metadata.quantity, 10),
     });
   } catch (err) {
+    if (respondStripeOutage(res, err, "ticketPaymentController.getGuestOrder")) return;
     logger.error(err, "Error fetching guest order");
     res.status(500).json({ error: "Failed to fetch order details" });
   }
@@ -343,6 +340,7 @@ exports.getSession = async (req, res) => {
       quantity: session.metadata.quantity,
     });
   } catch (err) {
+    if (respondStripeOutage(res, err, "ticketPaymentController.getSession")) return;
     logger.error(err, "Error retrieving session");
     res.status(500).json({ error: "Failed to retrieve session" });
   }
