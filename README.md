@@ -105,6 +105,8 @@ Stripe drives three flows — ticket purchase, venue booking, and course enrolme
 
 Course and event-subscription recurring billing (cancel, reactivate, and webhook handling) share one implementation via `utils/subscriptionLifecycle.js` — `courseController.js`/`eventSubscriptionController.js` each just configure it with their own Model, field names, and messages, rather than each maintaining their own copy of the cancel/reactivate/webhook logic.
 
+One-off ticket and venue booking success URLs point at the backend, not the frontend — the backend does the authoritative DB write (create ticket, decrement capacity, issue refund on failure) before redirecting the browser to the frontend confirmation page."
+
 ## Maintenance scripts (`scripts/`)
 
 One-time/manual scripts, not run automatically — invoke with `node scripts/<name>.js`, each loads `.env` itself:
