@@ -3,7 +3,7 @@
 
 const FOOTER = `
   <div style="background-color:#e6f7fe;padding:16px;text-align:center;font-size:12px;color:#618e9e;">
-    <p style="margin:0;">This email was sent by ASC Events. Do not reply to this email.</p>
+    <p style="margin:0;">This email was sent by ASC. Do not reply to this email.</p>
   </div>`;
 
 function wrap(headerColor, title, body) {

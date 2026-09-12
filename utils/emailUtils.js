@@ -3,7 +3,7 @@ const QRCode = require("qrcode");
 const { createTransporter } = require("../config/emailConfig");
 const templates = require("./emailTemplates");
 
-const from = () => `"ASC Events" <${process.env.EMAIL_USER}>`;
+const from = () => `"ASC" <${process.env.EMAIL_USER}>`;
 
 /**
  * Verify an email domain has MX records (i.e. can actually receive mail).
