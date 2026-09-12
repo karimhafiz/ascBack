@@ -31,23 +31,33 @@ function setRefreshTokenExpiration() {
   return expiresAt;
 }
 
+// NODE_ENV isn't reliably "production" for a raw @vercel/node function the
+// way it is for detected frameworks — VERCEL is the signal Vercel actually
+// guarantees at runtime (index.js's listen-vs-serverless check already
+// relies on it). Frontend and backend sit on different *.vercel.app
+// subdomains, a genuine cross-site boundary, so a deployed cookie always
+// needs secure + SameSite=None regardless of preview vs production.
+function isDeployed() {
+  return Boolean(process.env.VERCEL);
+}
+
 function setRefreshTokenCookie(res, refreshToken) {
-  const isProduction = process.env.NODE_ENV === "production";
+  const deployed = isDeployed();
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
-    secure: isProduction,
-    sameSite: isProduction ? "none" : "lax",
+    secure: deployed,
+    sameSite: deployed ? "none" : "lax",
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     path: "/",
   });
 }
 
 function clearRefreshTokenCookie(res) {
-  const isProduction = process.env.NODE_ENV === "production";
+  const deployed = isDeployed();
   res.clearCookie("refreshToken", {
     httpOnly: true,
-    secure: isProduction,
-    sameSite: isProduction ? "none" : "lax",
+    secure: deployed,
+    sameSite: deployed ? "none" : "lax",
     path: "/",
   });
 }

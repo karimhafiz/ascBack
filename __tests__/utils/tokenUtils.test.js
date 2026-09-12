@@ -54,8 +54,8 @@ describe("Token Utilities", () => {
   });
 
   describe("setRefreshTokenCookie", () => {
-    it("should set cookie with correct options in development", () => {
-      delete process.env.NODE_ENV;
+    it("should set cookie with correct options locally (not deployed)", () => {
+      delete process.env.VERCEL;
       const res = { cookie: jest.fn() };
       setRefreshTokenCookie(res, "test-token");
 
@@ -71,8 +71,8 @@ describe("Token Utilities", () => {
       );
     });
 
-    it("should set secure cookie in production", () => {
-      process.env.NODE_ENV = "production";
+    it("should set a secure, cross-site cookie when deployed on Vercel", () => {
+      process.env.VERCEL = "1";
       const res = { cookie: jest.fn() };
       setRefreshTokenCookie(res, "test-token");
 
@@ -85,11 +85,15 @@ describe("Token Utilities", () => {
           sameSite: "none",
         })
       );
-      delete process.env.NODE_ENV;
+      delete process.env.VERCEL;
     });
   });
 
   describe("clearRefreshTokenCookie", () => {
+    afterEach(() => {
+      delete process.env.VERCEL;
+    });
+
     it("should clear the refresh token cookie", () => {
       const res = { clearCookie: jest.fn() };
       clearRefreshTokenCookie(res);
@@ -100,6 +104,17 @@ describe("Token Utilities", () => {
           httpOnly: true,
           path: "/",
         })
+      );
+    });
+
+    it("matches the same secure/sameSite settings the cookie was set with when deployed", () => {
+      process.env.VERCEL = "1";
+      const res = { clearCookie: jest.fn() };
+      clearRefreshTokenCookie(res);
+
+      expect(res.clearCookie).toHaveBeenCalledWith(
+        "refreshToken",
+        expect.objectContaining({ secure: true, sameSite: "none" })
       );
     });
   });

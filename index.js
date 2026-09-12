@@ -15,8 +15,10 @@ const app = express();
 // client IP from X-Forwarded-For / Forwarded headers instead of erroring.
 app.set("trust proxy", 1);
 
+// NODE_ENV isn't reliably "production" for a raw @vercel/node function —
+// VERCEL is the signal Vercel actually guarantees at runtime.
 const allowedOrigins = [process.env.FRONT_END_URL?.replace(/\/$/, "")];
-if (process.env.NODE_ENV !== "production") {
+if (!process.env.VERCEL) {
   allowedOrigins.push("http://localhost:5173");
 }
 app.use(
@@ -92,7 +94,7 @@ app.get("/", (req, res) => {
 });
 app.use((err, req, res, next) => {
   logger.error({ err, path: req.path }, "Request failed");
-  const message = process.env.NODE_ENV === "production" ? "Internal server error" : err.message;
+  const message = process.env.VERCEL ? "Internal server error" : err.message;
   res.status(500).json({ error: message });
 });
 // Only listen when running locally, not on Vercel serverless
